@@ -1,0 +1,59 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Android
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/.idea/
+/android/captures/
+/android/.cxx/
+/android/.kotlin/
+*.iml
+
+# Signing : on commit jamais de keystore réel ; debug.keystore reste autorisé
+# (généré par AGP, non secret).
+*.keystore
+!debug.keystore
+*.jks
+keystore.properties
+/keystores/
+
+# Generated bindings (regenerated on each build)
+/android/app/src/main/jniLibs/
+/android/app/src/main/kotlin/com/douxev/mtlswrap/ffi/generated/
+
+# Certs / clés / bundles — JAMAIS commités. Le repo ne contient que les
+# tests qui génèrent leur PKI à la volée via rcgen.
+*.p12
+*.pfx
+*.pem
+*.crt
+*.key
+*.csr
+*.cer
+*.der
+backend-ca.*
+mtlswrap-bundle*.zip
+mtlswrap-backup*.zip
+bundles/
+
+# Secrets / env
+*.local.*
+.env
+.env.*
+secrets.properties
+secrets/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
+*.swo
+*.bak

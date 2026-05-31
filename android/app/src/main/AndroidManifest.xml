@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Réseau loopback — pas besoin d'INTERNET pour 127.0.0.1, mais on en a
+         besoin pour le côté upstream du proxy. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- API 34+ : foregroundServiceType="connectedDevice" exige *en plus* une
+         des permissions de la liste (BLE, USB, NFC, ou réseau). On prend la
+         plus légère : CHANGE_NETWORK_STATE est une permission normale
+         (auto-granted à l'install) et la plus cohérente avec notre cas de
+         proxy réseau. Sans elle, startForeground() throw une SecurityException. -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Notification (Android 13+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Pour lister les apps cibles et résoudre leur UID. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission"
+        xmlns:tools="http://schemas.android.com/tools" />
+
+    <queries>
+        <!-- Pour lister les apps lanceables dans le picker AddConfig.
+             Sans ça, Android 11+ filtre les retours de PackageManager. -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
+    <application
+        android:name=".MtlsApplication"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Mtlswrap">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Mtlswrap">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Proxy loopback : ForegroundService classique, type "connectedDevice"
+             puisque le service maintient une connexion réseau distante active. -->
+        <service
+            android:name=".service.LoopbackProxyService"
+            android:foregroundServiceType="connectedDevice"
+            android:exported="false" />
+
+        <!-- Service VPN : permission BIND_VPN_SERVICE octroyée par l'OS au
+             premier consentement utilisateur via VpnService.prepare(). -->
+        <service
+            android:name=".service.MtlsVpnService"
+            android:foregroundServiceType="connectedDevice"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
+        <!-- Pas exporté : déclenchable uniquement par nos propres PendingIntent
+             depuis les notifications de premier plan. -->
+        <receiver
+            android:name=".service.ProxyStopReceiver"
+            android:exported="false" />
+    </application>
+
+</manifest>

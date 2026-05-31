@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Thème XML minimaliste : tout le visuel passe par Compose Material3.
+         On ne dépend pas de Material Components Android (lib XML) pour rester léger.
+         Le parent Theme.Material.Light.NoActionBar est dans le framework Android. -->
+    <style name="Theme.Mtlswrap" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>

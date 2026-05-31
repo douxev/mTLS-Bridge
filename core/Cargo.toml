@@ -1,0 +1,74 @@
+[package]
+name = "mtls-bridge-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "mtls_bridge_core"
+# rlib indispensable pour que les tests d'intégration `tests/*.rs` puissent
+# linker contre le core. cdylib = .so pour Android. staticlib = libs natives iOS.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+uniffi = { version = "0.31", features = ["cli", "tokio"] }
+
+# Runtime async mono-thread : un seul cœur suffit pour piloter du forwarding,
+# minimise les wake-ups et donc la conso batterie sur ARM.
+tokio = { version = "1.43", default-features = false, features = [
+    "rt",
+    "macros",
+    "net",
+    "io-util",
+    "sync",
+    "time",
+] }
+
+# TLS : rustls + aws-lc-rs (assembleur ARM optimisé, audit FIPS-friendly).
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws_lc_rs"] }
+rustls-pemfile = "2.2"
+rustls-pki-types = "1.10"
+tokio-rustls = { version = "0.26", default-features = false, features = ["aws_lc_rs", "tls12"] }
+
+# Mode VPN : netstack-smoltcp transforme les paquets IP du tun_fd en
+# tokio::TcpStream pseudo-natifs (impl AsyncRead+AsyncWrite). futures pour
+# Stream/Sink (l'API d'entrée/sortie de netstack-smoltcp).
+netstack-smoltcp = "0.2"
+futures = { version = "0.3", default-features = false, features = ["std"] }
+
+thiserror = "2.0"
+log = "0.4"
+
+# Parsing HTTP/1.1 minimal pour réécrire le Host header au passage par le
+# bridge (reverse proxies type Caddy/Nginx routent par Host).
+httparse = "1.9"
+
+# tun_fd wrapper côté Linux/Android : appels syscalls read/write via libc.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc = "0.2"
+
+# Logging vers adb logcat (Android) ou stderr (host) — initialisé une fois
+# côté hôte via init_logging() exposé en uniffi.
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = { version = "0.14", default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1.43", default-features = false, features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "sync",
+    "time",
+    "test-util",
+] }
+# Pour les tests : on a besoin de générer une PKI en mémoire (CA, cert serveur,
+# cert client) sans dépendre d'OpenSSL ni de fichiers sur disque.
+rcgen = { version = "0.13", default-features = false, features = ["aws_lc_rs", "pem"] }
+env_logger = "0.11"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"

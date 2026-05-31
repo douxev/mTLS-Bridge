@@ -1,0 +1,3 @@
+# Copier vers local.properties et adapter. local.properties est git-ignored.
+sdk.dir=/home/maelle/Android/Sdk
+# ndk.dir optionnel : cargo-ndk lit ANDROID_NDK_HOME
