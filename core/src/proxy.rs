@@ -81,9 +81,15 @@ where
         .as_deref()
         .map(|t| PathAuth::new(t, &cfg.id))
         .transpose()?;
-    bridge_session(inbound, client_config, cfg, auth.as_ref(), response_rewrite.as_ref())
-        .await
-        .map(|_| ())
+    bridge_session(
+        inbound,
+        client_config,
+        cfg,
+        auth.as_ref(),
+        response_rewrite.as_ref(),
+    )
+    .await
+    .map(|_| ())
 }
 
 /// Session d'un client : la première requête est lue et validée (token ou
@@ -158,24 +164,25 @@ async fn connect_upstream(
         TcpStream::connect((host, cfg.upstream_port)),
     )
     .await
-    .map_err(|_| CoreError::Io(format!(
-        "TCP connect timeout après {}s vers {upstream_addr}",
-        UPSTREAM_CONNECT_TIMEOUT.as_secs(),
-    )))??;
+    .map_err(|_| {
+        CoreError::Io(format!(
+            "TCP connect timeout après {}s vers {upstream_addr}",
+            UPSTREAM_CONNECT_TIMEOUT.as_secs(),
+        ))
+    })??;
     // Pas de Nagle : on veut que les petits paquets HTTP partent immédiatement.
     tcp.set_nodelay(true)?;
     log::info!("bridge {}: TCP OK, TLS handshake (SNI={sni})", cfg.id);
 
     let connector = TlsConnector::from(client_config);
-    let upstream = tokio::time::timeout(
-        UPSTREAM_TLS_TIMEOUT,
-        connector.connect(server_name, tcp),
-    )
-    .await
-    .map_err(|_| CoreError::Tls(format!(
-        "TLS handshake timeout après {}s",
-        UPSTREAM_TLS_TIMEOUT.as_secs(),
-    )))??;
+    let upstream = tokio::time::timeout(UPSTREAM_TLS_TIMEOUT, connector.connect(server_name, tcp))
+        .await
+        .map_err(|_| {
+            CoreError::Tls(format!(
+                "TLS handshake timeout après {}s",
+                UPSTREAM_TLS_TIMEOUT.as_secs(),
+            ))
+        })??;
     Ok(upstream)
 }
 

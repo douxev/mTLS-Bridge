@@ -56,10 +56,7 @@ jobs:
       - name: Clippy (warnings = erreurs)
         run: cargo clippy -p mtls-bridge-core --tests -- -D warnings
 
-      # TODO: rendre bloquant (retirer continue-on-error) une fois le travail
-      # en cours dans core/ commité puis reformaté avec `cargo fmt --all`.
       - name: Format
-        continue-on-error: true
         run: cargo fmt --all -- --check
 
   android-build:

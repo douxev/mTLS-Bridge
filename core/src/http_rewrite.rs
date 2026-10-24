@@ -42,7 +42,10 @@ const IO_BUF: usize = 16 * 1024;
 
 /// Cherche `\r\n\r\n` dans `haystack` et renvoie l'index juste après.
 fn find_headers_end(haystack: &[u8]) -> Option<usize> {
-    haystack.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
+    haystack
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4)
 }
 
 fn invalid_data(msg: &'static str) -> io::Error {
@@ -209,7 +212,11 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
     }
 
     /// Transmet exactement `n` octets vers `dst` sans les accumuler.
-    async fn forward_exact<W: AsyncWrite + Unpin>(&mut self, dst: &mut W, n: u64) -> io::Result<()> {
+    async fn forward_exact<W: AsyncWrite + Unpin>(
+        &mut self,
+        dst: &mut W,
+        n: u64,
+    ) -> io::Result<()> {
         let from_buf = (self.buf.len() as u64).min(n) as usize;
         if from_buf > 0 {
             dst.write_all(&self.buf[..from_buf]).await?;
@@ -516,8 +523,12 @@ fn rewrite_and_split(
     if !matches!(req.parse(headers_bytes), Ok(httparse::Status::Complete(_))) {
         return RewriteOutcome::NotHttp;
     }
-    let Some(method) = req.method else { return RewriteOutcome::NotHttp };
-    let Some(path) = req.path else { return RewriteOutcome::NotHttp };
+    let Some(method) = req.method else {
+        return RewriteOutcome::NotHttp;
+    };
+    let Some(path) = req.path else {
+        return RewriteOutcome::NotHttp;
+    };
     let version = req.version.unwrap_or(1);
     let bl = body_length(req.headers);
     let upgrade = is_upgrade_request(req.headers);
@@ -629,7 +640,10 @@ fn is_upgrade_request(headers: &[httparse::Header<'_>]) -> bool {
             has_upgrade = true;
         } else if h.name.eq_ignore_ascii_case("connection") {
             conn_upgrade |= std::str::from_utf8(h.value)
-                .map(|v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case("upgrade")))
+                .map(|v| {
+                    v.split(',')
+                        .any(|t| t.trim().eq_ignore_ascii_case("upgrade"))
+                })
                 .unwrap_or(false);
         }
     }
@@ -650,7 +664,16 @@ where
     W: AsyncWrite + Unpin,
 {
     let auth = path_token.map(|t| PathAuth::new(t, "")).transpose()?;
-    http_request_pipe(inbound, Vec::new(), upstream, new_host, auth.as_ref(), None, true).await
+    http_request_pipe(
+        inbound,
+        Vec::new(),
+        upstream,
+        new_host,
+        auth.as_ref(),
+        None,
+        true,
+    )
+    .await
 }
 
 /// Ce que le pipe de réponse doit savoir de chaque requête, annoncé dans
@@ -745,9 +768,25 @@ where
         // 2. Parser + réécrire les headers (+ strip token si présent).
         let outcome = rewrite_and_split(&inb.buf, new_host, headers_end, auth, rewrites_responses);
         let (rewritten_headers, body_len, upgrade, meta) = match outcome {
-            RewriteOutcome::Ok { rewritten, body_len, upgrade, is_head, set_cookie } => {
-                let set_cookie = auth.filter(|_| set_cookie).map(|a| Arc::clone(&a.set_cookie));
-                (rewritten, body_len, upgrade, RequestMeta { is_head, set_cookie })
+            RewriteOutcome::Ok {
+                rewritten,
+                body_len,
+                upgrade,
+                is_head,
+                set_cookie,
+            } => {
+                let set_cookie = auth
+                    .filter(|_| set_cookie)
+                    .map(|a| Arc::clone(&a.set_cookie));
+                (
+                    rewritten,
+                    body_len,
+                    upgrade,
+                    RequestMeta {
+                        is_head,
+                        set_cookie,
+                    },
+                )
             }
             RewriteOutcome::BadToken => {
                 log::warn!("http_pipe: token mismatch — close fail-closed");
@@ -812,7 +851,12 @@ pub struct ResponseRewrite {
 /// (images, vidéos, octets, downloads) est streamé tel quel pour ne pas
 /// exploser la RAM.
 fn is_rewritable_content_type(ct: &str) -> bool {
-    let main = ct.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+    let main = ct
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     matches!(
         main.as_str(),
         "application/json"
@@ -940,7 +984,10 @@ fn url_variants(from: &str, to: &str) -> [(String, String); 4] {
     [
         (from.to_string(), to.to_string()),
         (percent_encode_url(from, true), percent_encode_url(to, true)),
-        (percent_encode_url(from, false), percent_encode_url(to, false)),
+        (
+            percent_encode_url(from, false),
+            percent_encode_url(to, false),
+        ),
         (from.replace('/', "\\/"), to.replace('/', "\\/")),
     ]
 }
@@ -952,7 +999,9 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     let last_start = haystack.len() - needle.len();
     let mut i = 0;
     while i <= last_start {
-        let p = haystack[i..=last_start].iter().position(|&b| b == needle[0])?;
+        let p = haystack[i..=last_start]
+            .iter()
+            .position(|&b| b == needle[0])?;
         let s = i + p;
         if &haystack[s..s + needle.len()] == needle {
             return Some(s);
@@ -976,7 +1025,9 @@ fn hex_digit(b: u8) -> Option<u8> {
 fn ends_authority(rest: &[u8]) -> bool {
     // Non réservés RFC 3986, `:` (port), `@` (userinfo), non-ASCII (IDN).
     fn continues(b: u8) -> bool {
-        b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b':' | b'@') || !b.is_ascii()
+        b.is_ascii_alphanumeric()
+            || matches!(b, b'-' | b'.' | b'_' | b'~' | b':' | b'@')
+            || !b.is_ascii()
     }
     match rest {
         [] => true,
@@ -1029,7 +1080,9 @@ pub(crate) fn rewrite_url_variants_bytes(
     let mut cur: Option<Vec<u8>> = None;
     for from in from_urls.iter().filter(|f| !f.is_empty()) {
         for (f, t) in url_variants(from, to) {
-            if let Some(next) = replace_base_url(cur.as_deref().unwrap_or(input), f.as_bytes(), t.as_bytes()) {
+            if let Some(next) =
+                replace_base_url(cur.as_deref().unwrap_or(input), f.as_bytes(), t.as_bytes())
+            {
                 cur = Some(next);
             }
         }
@@ -1189,7 +1242,8 @@ fn build_response_head(
         let name_lower = h.name.to_ascii_lowercase();
         match name_lower.as_str() {
             "location" => {
-                let rewritten = rewrite_url_variants_bytes(&h.value, &rewrite.from_urls, &rewrite.to_url);
+                let rewritten =
+                    rewrite_url_variants_bytes(&h.value, &rewrite.from_urls, &rewrite.to_url);
                 push_header(&mut out, &h.name, rewritten.as_deref().unwrap_or(&h.value));
             }
             "set-cookie" => {
@@ -1198,7 +1252,9 @@ fn build_response_head(
                 // accepte effectivement le cookie. Réinjecté tel quel dans le
                 // Cookie: header de la requête suivante (rewrite_cookie_inbound).
                 match std::str::from_utf8(&h.value) {
-                    Ok(v) => push_header(&mut out, &h.name, rewrite_set_cookie_outbound(v).as_bytes()),
+                    Ok(v) => {
+                        push_header(&mut out, &h.name, rewrite_set_cookie_outbound(v).as_bytes())
+                    }
                     Err(_) => push_header(&mut out, &h.name, &h.value),
                 }
             }
@@ -1333,8 +1389,13 @@ where
                         Some(rewritten) => (rewritten, true),
                         None => (body, false),
                     };
-                let mode = HeadMode::Buffered { len: body.len(), modified };
-                downstream.write_all(&build_response_head(&head, rewrite, mode, session_cookie)).await?;
+                let mode = HeadMode::Buffered {
+                    len: body.len(),
+                    modified,
+                };
+                downstream
+                    .write_all(&build_response_head(&head, rewrite, mode, session_cookie))
+                    .await?;
                 downstream.write_all(&body).await?;
                 downstream.flush().await?;
                 if matches!(body_len, RespBodyLen::UntilEof) {
@@ -1347,14 +1408,21 @@ where
                 // Trop gros pour être réécrit : on ré-émet le début déjà lu
                 // puis on streame la suite, framing d'origine.
                 downstream
-                    .write_all(&build_response_head(&head, rewrite, HeadMode::Passthrough, session_cookie))
+                    .write_all(&build_response_head(
+                        &head,
+                        rewrite,
+                        HeadMode::Passthrough,
+                        session_cookie,
+                    ))
                     .await?;
                 if !matches!(body_len, RespBodyLen::Chunked) {
                     downstream.write_all(&prefix).await?;
                     return up.copy_rest(&mut downstream).await;
                 }
                 if !prefix.is_empty() {
-                    downstream.write_all(format!("{:x}\r\n", prefix.len()).as_bytes()).await?;
+                    downstream
+                        .write_all(format!("{:x}\r\n", prefix.len()).as_bytes())
+                        .await?;
                     downstream.write_all(&prefix).await?;
                     downstream.write_all(b"\r\n").await?;
                 }
@@ -1368,7 +1436,12 @@ where
         // 5. Passthrough : headers (Location/Set-Cookie réécrits) puis body
         //    tel quel.
         downstream
-            .write_all(&build_response_head(&head, rewrite, HeadMode::Passthrough, session_cookie))
+            .write_all(&build_response_head(
+                &head,
+                rewrite,
+                HeadMode::Passthrough,
+                session_cookie,
+            ))
             .await?;
         match body_len {
             RespBodyLen::None => {
@@ -1436,7 +1509,9 @@ mod tests {
             drop(tx);
         });
         let mut upstream: Vec<u8> = Vec::new();
-        http_pipe_with_host_rewrite(rx, &mut upstream, "b", None).await.unwrap();
+        http_pipe_with_host_rewrite(rx, &mut upstream, "b", None)
+            .await
+            .unwrap();
         let s = String::from_utf8(upstream).unwrap();
         assert!(s.contains("Host: b\r\n"));
         assert!(s.ends_with("\r\n\r\nABCD"));
@@ -1531,7 +1606,10 @@ mod tests {
             .await
             .unwrap();
         let s = String::from_utf8(downstream).unwrap();
-        assert!(s.contains("http://127.0.0.1:13873/index.php/login/v2/poll"), "got: {s}");
+        assert!(
+            s.contains("http://127.0.0.1:13873/index.php/login/v2/poll"),
+            "got: {s}"
+        );
         assert!(s.contains("http://127.0.0.1:13873/index.php/login/v2/flow/y"));
         assert!(!s.contains("https://media.example.com"));
         // Content-Length doit être recalculé (corps plus court car http vs https).
@@ -1563,9 +1641,15 @@ mod tests {
             .unwrap();
         let s = String::from_utf8(downstream).unwrap();
         // Le host Authentik n'est PAS touché (autre domaine).
-        assert!(s.contains("https://auth.example.com/application/"), "got: {s}");
+        assert!(
+            s.contains("https://auth.example.com/application/"),
+            "got: {s}"
+        );
         // Le redirect_uri imbriqué (percent-encoded) doit être réécrit.
-        assert!(s.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A13873%2Fcallback"), "got: {s}");
+        assert!(
+            s.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A13873%2Fcallback"),
+            "got: {s}"
+        );
         assert!(!s.contains("media.example.com"));
     }
 
@@ -1626,8 +1710,14 @@ mod tests {
             .await
             .unwrap();
         // On retrouve le body binaire intact à la fin.
-        let split_pos = downstream.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
-        assert_eq!(&downstream[split_pos + 4..split_pos + 4 + body.len()], body.as_slice());
+        let split_pos = downstream
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .unwrap();
+        assert_eq!(
+            &downstream[split_pos + 4..split_pos + 4 + body.len()],
+            body.as_slice()
+        );
     }
 
     /// Force Accept-Encoding: identity côté requête pour ne pas avoir à
@@ -1642,7 +1732,9 @@ mod tests {
             drop(tx);
         });
         let mut upstream: Vec<u8> = Vec::new();
-        http_pipe_with_host_rewrite(rx, &mut upstream, "b", None).await.unwrap();
+        http_pipe_with_host_rewrite(rx, &mut upstream, "b", None)
+            .await
+            .unwrap();
         let s = String::from_utf8(upstream).unwrap();
         assert!(s.contains("Accept-Encoding: identity\r\n"), "got: {s}");
         assert!(!s.contains("gzip"));
@@ -1668,7 +1760,11 @@ mod tests {
     #[test]
     fn rewrite_url_variants_handles_json_escaped_slashes() {
         let input = r#"{"endpoint":"https:\/\/intra.m.example.com\/login\/v2\/poll"}"#;
-        let out = rewrite_url_variants(input, "https://intra.m.example.com", "http://127.0.0.1:28021");
+        let out = rewrite_url_variants(
+            input,
+            "https://intra.m.example.com",
+            "http://127.0.0.1:28021",
+        );
         assert_eq!(
             out,
             r#"{"endpoint":"http:\/\/127.0.0.1:28021\/login\/v2\/poll"}"#
@@ -1712,7 +1808,10 @@ mod tests {
         assert!(s.ends_with("\r\n\r\n{}"), "got: {s}");
         // Pas de Content-Length injecté sur la 204 (interdit par la RFC).
         let head_204 = s.split("HTTP/1.1 200").next().unwrap();
-        assert!(!head_204.to_ascii_lowercase().contains("content-length"), "got: {s}");
+        assert!(
+            !head_204.to_ascii_lowercase().contains("content-length"),
+            "got: {s}"
+        );
     }
 
     /// Même cas avec un content-type réécrivable sur la 204.
@@ -1765,9 +1864,17 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        let head_end = downstream.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+        let head_end = downstream
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .unwrap()
+            + 4;
         let head = String::from_utf8_lossy(&downstream[..head_end]);
-        assert_eq!(head.matches("101 Switching Protocols").count(), 1, "got: {head}");
+        assert_eq!(
+            head.matches("101 Switching Protocols").count(),
+            1,
+            "got: {head}"
+        );
         assert_eq!(&downstream[head_end..], frames);
     }
 
@@ -1795,7 +1902,10 @@ mod tests {
             .unwrap();
         let head_end = upstream.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
         let head = String::from_utf8_lossy(&upstream[..head_end]);
-        assert!(head.starts_with("GET /socket?api_key=x HTTP/1.1\r\n"), "got: {head}");
+        assert!(
+            head.starts_with("GET /socket?api_key=x HTTP/1.1\r\n"),
+            "got: {head}"
+        );
         assert!(head.contains("Host: real\r\n"), "got: {head}");
         assert_eq!(&upstream[head_end..], frames);
     }
@@ -1842,12 +1952,18 @@ mod tests {
     async fn pump_response(input: Vec<u8>, heads: &[bool]) -> (Vec<u8>, io::Result<()>) {
         let metas = heads
             .iter()
-            .map(|&is_head| RequestMeta { is_head, set_cookie: None })
+            .map(|&is_head| RequestMeta {
+                is_head,
+                set_cookie: None,
+            })
             .collect();
         pump_response_meta(input, metas).await
     }
 
-    async fn pump_response_meta(input: Vec<u8>, metas: Vec<RequestMeta>) -> (Vec<u8>, io::Result<()>) {
+    async fn pump_response_meta(
+        input: Vec<u8>,
+        metas: Vec<RequestMeta>,
+    ) -> (Vec<u8>, io::Result<()>) {
         let (mut tx, rx) = tokio::io::duplex(64 * 1024);
         tokio::spawn(async move {
             let _ = tx.write_all(&input).await;
@@ -1934,7 +2050,10 @@ mod tests {
         res.unwrap();
         let s = String::from_utf8(out).unwrap();
         assert_eq!(s.matches("200 OK").count(), 2, "got: {s}");
-        assert!(s.contains("Content-Length: 1234\r\n"), "CL de HEAD transmis tel quel: {s}");
+        assert!(
+            s.contains("Content-Length: 1234\r\n"),
+            "CL de HEAD transmis tel quel: {s}"
+        );
         assert!(s.ends_with("\r\n\r\n{}"), "got: {s}");
     }
 
@@ -2160,7 +2279,8 @@ mod tests {
     /// encore réécrite.
     #[tokio::test]
     async fn chunked_passthrough_response_keeps_the_response_loop() {
-        let first: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nTransfer-Encoding: chunked\r\n\r\n\
+        let first: &[u8] =
+            b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nTransfer-Encoding: chunked\r\n\r\n\
                              3\r\n\x89PN\r\n2;ext=1\r\nG\n\r\n0\r\nX-Trailer: t\r\n\r\n";
         let mut input = first.to_vec();
         input.extend_from_slice(&response_with_body(
@@ -2169,7 +2289,11 @@ mod tests {
         ));
         let (out, res) = pump_response(input, &[]).await;
         res.unwrap();
-        assert!(out.starts_with(first), "got: {:?}", String::from_utf8_lossy(&out));
+        assert!(
+            out.starts_with(first),
+            "got: {:?}",
+            String::from_utf8_lossy(&out)
+        );
         let rest = String::from_utf8(out[first.len()..].to_vec()).unwrap();
         assert!(rest.contains("http://127.0.0.1:13873/a"), "got: {rest}");
         assert!(!rest.contains("media.example.com"), "got: {rest}");
@@ -2181,7 +2305,8 @@ mod tests {
     async fn chunked_request_body_keeps_following_requests_rewritten() {
         let body: &[u8] = b"4;ext=1\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Trailer: t\r\n\r\n";
         let mut input =
-            b"POST /TOK/upload HTTP/1.1\r\nHost: 127.0.0.1:1\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+            b"POST /TOK/upload HTTP/1.1\r\nHost: 127.0.0.1:1\r\nTransfer-Encoding: chunked\r\n\r\n"
+                .to_vec();
         input.extend_from_slice(body);
         input.extend_from_slice(b"GET /TOK/next HTTP/1.1\r\nHost: 127.0.0.1:1\r\n\r\n");
         input.extend_from_slice(b"GET /no-token HTTP/1.1\r\nHost: 127.0.0.1:1\r\n\r\n");
@@ -2189,17 +2314,24 @@ mod tests {
         assert_eq!(res.unwrap_err().kind(), io::ErrorKind::PermissionDenied);
         let s = String::from_utf8(out).unwrap();
         assert!(s.starts_with("POST /upload HTTP/1.1\r\n"), "got: {s}");
-        assert!(s.contains(std::str::from_utf8(body).unwrap()), "framing transmis tel quel: {s}");
+        assert!(
+            s.contains(std::str::from_utf8(body).unwrap()),
+            "framing transmis tel quel: {s}"
+        );
         assert!(s.contains("GET /next HTTP/1.1\r\n"), "got: {s}");
         assert_eq!(s.matches("Host: real\r\n").count(), 2, "got: {s}");
-        assert!(!s.contains("TOK") && !s.contains("no-token") && !s.contains("127.0.0.1:1"), "got: {s}");
+        assert!(
+            !s.contains("TOK") && !s.contains("no-token") && !s.contains("127.0.0.1:1"),
+            "got: {s}"
+        );
     }
 
     #[tokio::test]
     async fn malformed_chunk_size_is_rejected() {
-        let input = b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nTransfer-Encoding: chunked\r\n\r\n\
+        let input =
+            b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nTransfer-Encoding: chunked\r\n\r\n\
                       zz\r\nxx\r\n0\r\n\r\n"
-            .to_vec();
+                .to_vec();
         let (_, res) = pump_response(input, &[]).await;
         assert_eq!(res.unwrap_err().kind(), io::ErrorKind::InvalidData);
     }
@@ -2221,7 +2353,8 @@ mod tests {
         let small = b"<a href=\"https://media.example.com/x\">".to_vec();
         let big = vec![b'b'; MAX_REWRITE_BODY];
         let mut input =
-            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nTransfer-Encoding: chunked\r\n\r\n"
+                .to_vec();
         for c in [&small, &big] {
             input.extend_from_slice(format!("{:x}\r\n", c.len()).as_bytes());
             input.extend_from_slice(c);
@@ -2242,7 +2375,9 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_until_eof_rewritable_body_is_streamed_unmodified() {
-        let mut input = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\nhttps://media.example.com/x ".to_vec();
+        let mut input =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\nhttps://media.example.com/x "
+                .to_vec();
         input.resize(input.len() + MAX_REWRITE_BODY, b'c');
         let (out, res) = pump_response(input.clone(), &[]).await;
         res.unwrap();
@@ -2259,7 +2394,10 @@ mod tests {
         let (out, res) = pump_response(input, &[]).await;
         assert_eq!(res.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
         let s = String::from_utf8(out).unwrap();
-        assert!(s.contains("Content-Length: 18446744073709551615\r\n"), "got: {s}");
+        assert!(
+            s.contains("Content-Length: 18446744073709551615\r\n"),
+            "got: {s}"
+        );
         assert!(s.ends_with("\r\n\r\n{}"), "got: {s}");
     }
 
@@ -2296,7 +2434,8 @@ mod tests {
             "https://media.example.com",
             "https://media.example.com?x=1",
         ] {
-            let out = rewrite_url_variants_bytes(url.as_bytes(), &rw.from_urls, &rw.to_url).unwrap();
+            let out =
+                rewrite_url_variants_bytes(url.as_bytes(), &rw.from_urls, &rw.to_url).unwrap();
             let out = String::from_utf8(out).unwrap();
             let path = out.strip_prefix("http://127.0.0.1:4242").unwrap();
             assert!(strip_path_token(path, "TOK").is_some(), "{url} → {out}");
@@ -2325,7 +2464,10 @@ mod tests {
         // Trafic toutes les 2 min : la session survit au-delà de 5 min cumulées.
         for _ in 0..3 {
             tokio::time::sleep(Duration::from_secs(120)).await;
-            client.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
+            client
+                .write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+                .await
+                .unwrap();
             assert!(server.read(&mut buf).await.unwrap() > 0);
         }
         assert!(!session.is_finished(), "session active fermée à tort");
@@ -2335,7 +2477,11 @@ mod tests {
             .await
             .expect("session inactive non fermée")
             .unwrap();
-        assert_eq!(client.read(&mut buf).await.unwrap(), 0, "le client voit la fermeture");
+        assert_eq!(
+            client.read(&mut buf).await.unwrap(),
+            0,
+            "le client voit la fermeture"
+        );
     }
 
     /// Token refusé : la connexion client est fermée tout de suite, sans
@@ -2359,12 +2505,19 @@ mod tests {
             )
             .await
         });
-        client.write_all(b"GET /wrong HTTP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
+        client
+            .write_all(b"GET /wrong HTTP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
         let rejected = tokio::time::timeout(Duration::from_secs(5), session)
             .await
             .expect("session non fermée sur token invalide")
             .unwrap();
-        assert_eq!(rejected, Some(TokenRejection::InvalidToken), "refus remonté pour l'audit");
+        assert_eq!(
+            rejected,
+            Some(TokenRejection::InvalidToken),
+            "refus remonté pour l'audit"
+        );
         let mut buf = [0u8; 16];
         assert_eq!(client.read(&mut buf).await.unwrap(), 0);
     }
@@ -2390,7 +2543,10 @@ mod tests {
         assert_eq!(a.cookie_name, "mtlsb_3f2a9c1d");
         assert_eq!(a.cookie_secret.len(), 2 * AUTH_COOKIE_SECRET_LEN);
         assert!(a.cookie_secret.bytes().all(|c| c.is_ascii_hexdigit()));
-        assert_ne!(a.cookie_secret, b.cookie_secret, "secret tiré à chaque démarrage");
+        assert_ne!(
+            a.cookie_secret, b.cookie_secret,
+            "secret tiré à chaque démarrage"
+        );
         assert_eq!(
             &*a.set_cookie,
             format!("{}; HttpOnly; SameSite=Strict; Path=/", cookie_of(&a)),
@@ -2413,20 +2569,29 @@ mod tests {
         let (out, res) = pump_request_auth(input.into_bytes(), Some(&auth), Some(tx)).await;
         res.unwrap();
         let s = String::from_utf8(out).unwrap();
-        assert!(s.starts_with("GET /web/index.html HTTP/1.1\r\n"), "got: {s}");
+        assert!(
+            s.starts_with("GET /web/index.html HTTP/1.1\r\n"),
+            "got: {s}"
+        );
         assert!(s.contains("GET /web/main.js HTTP/1.1\r\n"), "got: {s}");
         assert!(s.contains("GET /api HTTP/1.1\r\n"), "got: {s}");
         // Cookie retiré, les autres transmis (préfixe __Host- restauré) ;
         // header supprimé quand il ne reste rien.
         assert!(s.contains("Cookie: __Host-sess=1; lang=fr\r\n"), "got: {s}");
         assert_eq!(s.matches("Cookie:").count(), 1, "got: {s}");
-        assert!(!s.contains(&auth.cookie_secret) && !s.contains("mtlsb_"), "got: {s}");
+        assert!(
+            !s.contains(&auth.cookie_secret) && !s.contains("mtlsb_"),
+            "got: {s}"
+        );
 
         let metas = drain_metas(&mut rx);
         assert_eq!(metas.len(), 3);
         assert_eq!(metas[0].set_cookie.as_deref(), Some(&*auth.set_cookie));
         assert!(metas[1].set_cookie.is_none(), "cookie déjà valide");
-        assert!(metas[2].set_cookie.is_none(), "token + cookie valide : rien à reposer");
+        assert!(
+            metas[2].set_cookie.is_none(),
+            "token + cookie valide : rien à reposer"
+        );
     }
 
     #[tokio::test]
@@ -2439,14 +2604,24 @@ mod tests {
             format!("Cookie: {}=\r\n", auth.cookie_name),
             format!("Cookie: {}={}x\r\n", auth.cookie_name, auth.cookie_secret),
             format!("Cookie: {}\r\n", cookie_of(&other)),
-            format!("Cookie: {}={}\r\n", other_cfg.cookie_name, auth.cookie_secret),
+            format!(
+                "Cookie: {}={}\r\n",
+                other_cfg.cookie_name, auth.cookie_secret
+            ),
             format!("Cookie: x{}\r\n", cookie_of(&auth)),
         ];
         for extra in cases {
             let input = format!("GET /web/main.js HTTP/1.1\r\nHost: x\r\n{extra}\r\n");
             let (out, res) = pump_request_auth(input.into_bytes(), Some(&auth), None).await;
-            assert_eq!(res.unwrap_err().kind(), io::ErrorKind::PermissionDenied, "{extra}");
-            assert!(out.is_empty(), "rien ne doit partir vers l'upstream ({extra})");
+            assert_eq!(
+                res.unwrap_err().kind(),
+                io::ErrorKind::PermissionDenied,
+                "{extra}"
+            );
+            assert!(
+                out.is_empty(),
+                "rien ne doit partir vers l'upstream ({extra})"
+            );
         }
     }
 
@@ -2456,11 +2631,16 @@ mod tests {
     async fn stale_cookie_is_replaced_on_next_token_request() {
         let auth = PathAuth::new("TOK", "cfg1").unwrap();
         let stale = PathAuth::new("TOK", "cfg1").unwrap();
-        let input = format!("GET /TOK/ HTTP/1.1\r\nHost: x\r\nCookie: {}\r\n\r\n", cookie_of(&stale));
+        let input = format!(
+            "GET /TOK/ HTTP/1.1\r\nHost: x\r\nCookie: {}\r\n\r\n",
+            cookie_of(&stale)
+        );
         let (tx, mut rx) = mpsc::unbounded_channel();
         let (out, res) = pump_request_auth(input.into_bytes(), Some(&auth), Some(tx)).await;
         res.unwrap();
-        assert!(String::from_utf8(out).unwrap().starts_with("GET / HTTP/1.1\r\n"));
+        assert!(String::from_utf8(out)
+            .unwrap()
+            .starts_with("GET / HTTP/1.1\r\n"));
         let metas = drain_metas(&mut rx);
         assert_eq!(metas[0].set_cookie.as_deref(), Some(&*auth.set_cookie));
     }
@@ -2480,7 +2660,8 @@ mod tests {
 
     #[tokio::test]
     async fn cookie_header_with_only_proxy_cookies_is_dropped() {
-        let input = b"GET / HTTP/1.1\r\nHost: x\r\nCookie: mtlsb_other=zz\r\nX-A: 1\r\n\r\n".to_vec();
+        let input =
+            b"GET / HTTP/1.1\r\nHost: x\r\nCookie: mtlsb_other=zz\r\nX-A: 1\r\n\r\n".to_vec();
         let (out, res) = pump_request(input, None, None).await;
         res.unwrap();
         let s = String::from_utf8(out).unwrap();
@@ -2499,9 +2680,15 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nSet-Cookie: __Host-sess=1; Secure; Path=/\r\n",
             b"<p>hi</p>",
         ));
-        input.extend_from_slice(&response_with_body("HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n", b"PNG"));
+        input.extend_from_slice(&response_with_body(
+            "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n",
+            b"PNG",
+        ));
         let metas = vec![
-            RequestMeta { is_head: false, set_cookie: Some(Arc::clone(&auth.set_cookie)) },
+            RequestMeta {
+                is_head: false,
+                set_cookie: Some(Arc::clone(&auth.set_cookie)),
+            },
             RequestMeta::default(),
         ];
         let (out, res) = pump_response_meta(input, metas).await;
@@ -2510,10 +2697,16 @@ mod tests {
         let line = format!("Set-Cookie: {}\r\n", auth.set_cookie);
         assert_eq!(s.matches(&line).count(), 1, "got: {s}");
         let (interim, rest) = s.split_once("HTTP/1.1 200").unwrap();
-        assert!(!interim.contains("Set-Cookie"), "pas sur le 100 Continue: {s}");
+        assert!(
+            !interim.contains("Set-Cookie"),
+            "pas sur le 100 Continue: {s}"
+        );
         let (first, second) = rest.split_once("HTTP/1.1 200").unwrap();
         assert!(first.contains(&line), "got: {s}");
-        assert!(first.contains("Set-Cookie: nhx_sess=1; Path=/\r\n"), "got: {s}");
+        assert!(
+            first.contains("Set-Cookie: nhx_sess=1; Path=/\r\n"),
+            "got: {s}"
+        );
         assert!(!second.contains("Set-Cookie"), "got: {s}");
     }
 
@@ -2542,7 +2735,10 @@ mod tests {
         let ok = b"POST /TOK/x HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi";
         assert_eq!(first_request(ok, Some(&auth)).await.unwrap().unwrap(), ok);
         let by_cookie = format!("GET /web HTTP/1.1\r\nCookie: {}\r\n\r\n", cookie_of(&auth));
-        assert!(first_request(by_cookie.as_bytes(), Some(&auth)).await.unwrap().is_some());
+        assert!(first_request(by_cookie.as_bytes(), Some(&auth))
+            .await
+            .unwrap()
+            .is_some());
         // Refusées.
         denied(
             first_request(b"GET /web HTTP/1.1\r\nHost: x\r\n\r\n", Some(&auth)).await,
@@ -2553,12 +2749,21 @@ mod tests {
             TokenRejection::NotHttp,
         );
         let huge = vec![b'A'; MAX_HEADER_BUF + 10];
-        denied(first_request(&huge, Some(&auth)).await, TokenRejection::HeadersTooLarge);
+        denied(
+            first_request(&huge, Some(&auth)).await,
+            TokenRejection::HeadersTooLarge,
+        );
         // Client parti avant la fin des headers : rien.
-        assert!(first_request(b"GET /TOK/x HTTP/1.1\r\nHo", Some(&auth)).await.unwrap().is_none());
+        assert!(first_request(b"GET /TOK/x HTTP/1.1\r\nHo", Some(&auth))
+            .await
+            .unwrap()
+            .is_none());
         assert!(first_request(b"", None).await.unwrap().is_none());
         // Sans token, pas de contrôle : même un flux non HTTP passe.
-        assert!(first_request(b"\x16\x03\x01garbage\r\n\r\n", None).await.unwrap().is_some());
+        assert!(first_request(b"\x16\x03\x01garbage\r\n\r\n", None)
+            .await
+            .unwrap()
+            .is_some());
     }
 
     /// La session rejoue la première requête déjà lue avant de lire la suite
@@ -2583,7 +2788,10 @@ mod tests {
             )
             .await;
         });
-        client.write_all(b"TP/1.1\r\nHost: x\r\n\r\n").await.unwrap();
+        client
+            .write_all(b"TP/1.1\r\nHost: x\r\n\r\n")
+            .await
+            .unwrap();
         let mut seen = Vec::new();
         let mut buf = [0u8; 4096];
         tokio::time::timeout(Duration::from_secs(5), async {
@@ -2607,7 +2815,10 @@ mod tests {
     fn ipv6_literal_is_bracketed_in_urls() {
         assert_eq!(crate::proxy::url_host("::1"), "[::1]");
         assert_eq!(crate::proxy::url_host("[2001:db8::1]"), "[2001:db8::1]");
-        assert_eq!(crate::proxy::url_host("media.example.com"), "media.example.com");
+        assert_eq!(
+            crate::proxy::url_host("media.example.com"),
+            "media.example.com"
+        );
         let rw = crate::loopback::loopback_response_rewrite(&dummy_cfg("::1", 8443, None), 1);
         assert_eq!(rw.from_urls[0], "https://[::1]:8443");
     }
@@ -2618,14 +2829,25 @@ mod tests {
     /// une erreur d'E/S ordinaire n'est jamais prise pour un refus.
     #[tokio::test]
     async fn keepalive_rejection_carries_its_reason() {
-        let input = b"GET /TOK/a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n".to_vec();
+        let input =
+            b"GET /TOK/a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n".to_vec();
         let (upstream, res) = pump_request(input, Some("TOK"), None).await;
-        assert_eq!(token_rejection(&res.unwrap_err()), Some(TokenRejection::InvalidToken));
+        assert_eq!(
+            token_rejection(&res.unwrap_err()),
+            Some(TokenRejection::InvalidToken)
+        );
         let s = String::from_utf8(upstream).unwrap();
-        assert!(s.starts_with("GET /a HTTP/1.1\r\n") && !s.contains("/b"), "got: {s}");
+        assert!(
+            s.starts_with("GET /a HTTP/1.1\r\n") && !s.contains("/b"),
+            "got: {s}"
+        );
 
-        let (_, res) = pump_request(b"\x16\x03\x01garbage\r\n\r\n".to_vec(), Some("TOK"), None).await;
-        assert_eq!(token_rejection(&res.unwrap_err()), Some(TokenRejection::NotHttp));
+        let (_, res) =
+            pump_request(b"\x16\x03\x01garbage\r\n\r\n".to_vec(), Some("TOK"), None).await;
+        assert_eq!(
+            token_rejection(&res.unwrap_err()),
+            Some(TokenRejection::NotHttp)
+        );
         let other = io::Error::new(io::ErrorKind::PermissionDenied, "EACCES");
         assert_eq!(token_rejection(&other), None);
     }
@@ -2672,7 +2894,10 @@ mod tests {
             assert!(s.contains("Host: real\r\n"), "got: {s}");
             if rewrite {
                 assert!(s.contains("Accept-Encoding: identity\r\n"), "got: {s}");
-                assert!(!s.contains("gzip") && !s.contains("If-None-Match"), "got: {s}");
+                assert!(
+                    !s.contains("gzip") && !s.contains("If-None-Match"),
+                    "got: {s}"
+                );
             } else {
                 assert!(s.contains("Accept-Encoding: gzip, br\r\n"), "got: {s}");
                 assert!(s.contains("If-None-Match: \"v1\"\r\n"), "got: {s}");
@@ -2697,8 +2922,14 @@ mod tests {
             ("href='https://h.com'", "href='http://L:1/T'"),
             ("voir https://h.com ici", "voir http://L:1/T ici"),
             ("a=https://h.com&b=1", "a=http://L:1/T&b=1"),
-            ("<d:href>https://h.com</d:href>", "<d:href>http://L:1/T</d:href>"),
-            (r#""<a href=\"https://h.com\">""#, r#""<a href=\"http://L:1/T\">""#),
+            (
+                "<d:href>https://h.com</d:href>",
+                "<d:href>http://L:1/T</d:href>",
+            ),
+            (
+                r#""<a href=\"https://h.com\">""#,
+                r#""<a href=\"http://L:1/T\">""#,
+            ),
             ("https://h.com%2Fa", "http://L:1/T%2Fa"),
         ] {
             assert_eq!(rewrite(input), expected, "{input}");
@@ -2723,9 +2954,15 @@ mod tests {
     fn base_url_boundary_applies_to_encoded_variants() {
         let rewrite = |input: &str| rewrite_url_variants(input, "https://h.com", "http://L:1/T");
         // Percent-encodé (`redirect_uri=` imbriqué), majuscules et minuscules.
-        assert_eq!(rewrite("u=https%3A%2F%2Fh.com%2Fa&x"), "u=http%3A%2F%2FL%3A1%2FT%2Fa&x");
+        assert_eq!(
+            rewrite("u=https%3A%2F%2Fh.com%2Fa&x"),
+            "u=http%3A%2F%2FL%3A1%2FT%2Fa&x"
+        );
         assert_eq!(rewrite("u=https%3a%2f%2fh.com"), "u=http%3a%2f%2fL%3a1%2fT");
-        assert_eq!(rewrite("u=https%3A%2F%2Fh.com%22"), "u=http%3A%2F%2FL%3A1%2FT%22");
+        assert_eq!(
+            rewrite("u=https%3A%2F%2Fh.com%22"),
+            "u=http%3A%2F%2FL%3A1%2FT%22"
+        );
         for input in [
             "u=https%3A%2F%2Fh.com%3A8443%2Fa",
             "u=https%3a%2f%2fh.com%3a8443",
@@ -2734,9 +2971,18 @@ mod tests {
             assert_eq!(rewrite(input), input, "{input}");
         }
         // Slashes échappés JSON (PHP `json_encode`).
-        assert_eq!(rewrite(r#"{"u":"https:\/\/h.com\/a"}"#), r#"{"u":"http:\/\/L:1\/T\/a"}"#);
-        assert_eq!(rewrite(r#"{"u":"https:\/\/h.com"}"#), r#"{"u":"http:\/\/L:1\/T"}"#);
-        for input in [r#""https:\/\/h.com:8443\/a""#, r#""https:\/\/h.com.autre.com\/a""#] {
+        assert_eq!(
+            rewrite(r#"{"u":"https:\/\/h.com\/a"}"#),
+            r#"{"u":"http:\/\/L:1\/T\/a"}"#
+        );
+        assert_eq!(
+            rewrite(r#"{"u":"https:\/\/h.com"}"#),
+            r#"{"u":"http:\/\/L:1\/T"}"#
+        );
+        for input in [
+            r#""https:\/\/h.com:8443\/a""#,
+            r#""https:\/\/h.com.autre.com\/a""#,
+        ] {
             assert_eq!(rewrite(input), input, "{input}");
         }
     }
@@ -2747,10 +2993,16 @@ mod tests {
     #[test]
     fn overlapping_canonical_hosts_do_not_clobber_each_other() {
         let input = b"https://h:8443/a https://h/b https://h.autre/c";
-        for from in [["https://h", "https://h:8443"], ["https://h:8443", "https://h"]] {
+        for from in [
+            ["https://h", "https://h:8443"],
+            ["https://h:8443", "https://h"],
+        ] {
             let from: Vec<String> = from.iter().map(|f| f.to_string()).collect();
             let out = rewrite_url_variants_bytes(input, &from, "http://L").unwrap();
-            assert_eq!(String::from_utf8(out).unwrap(), "http://L/a http://L/b https://h.autre/c");
+            assert_eq!(
+                String::from_utf8(out).unwrap(),
+                "http://L/a http://L/b https://h.autre/c"
+            );
         }
     }
 }

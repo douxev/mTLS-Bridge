@@ -193,7 +193,10 @@ impl Sink<AnyIpPktFrame> for TunFd {
         item: AnyIpPktFrame,
     ) -> std::result::Result<(), Self::Error> {
         let this = self.get_mut();
-        debug_assert!(this.write_buf.is_none(), "start_send sans poll_ready préalable");
+        debug_assert!(
+            this.write_buf.is_none(),
+            "start_send sans poll_ready préalable"
+        );
         this.write_buf = Some(item);
         Ok(())
     }
@@ -299,9 +302,8 @@ pub async fn start_vpn(
         .mtu(mtu as usize)
         .build()
         .map_err(|e| CoreError::Internal(format!("netstack build: {e}")))?;
-    let tcp_listener = tcp_listener.ok_or_else(|| {
-        CoreError::Internal("tcp listener absent (tcp non activé ?)".into())
-    })?;
+    let tcp_listener = tcp_listener
+        .ok_or_else(|| CoreError::Internal("tcp listener absent (tcp non activé ?)".into()))?;
 
     let (stop_tx, stop_rx) = watch::channel(false);
     let mut tasks: Vec<JoinHandle<()>> = Vec::new();

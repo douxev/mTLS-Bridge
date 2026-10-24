@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use crate::config::{ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust};
 use crate::error::Result;
-use crate::loopback::{
-    start_loopback, AuditLogger, LoopbackHandle, PeerUidResolver,
-};
+use crate::loopback::{start_loopback, AuditLogger, LoopbackHandle, PeerUidResolver};
 use crate::signer::KeystoreSigner;
 
 #[derive(Clone, uniffi::Record)]
@@ -60,7 +58,14 @@ pub async fn start_loopback_proxy(
     let cfg = build_proxy_config(config, signer);
     // Sur le runtime multi-thread des proxys, pas sur celui d'async-compat
     // (mono-thread) : cf. crate::runtime.
-    crate::runtime::run(start_loopback(cfg, bind_port, expected_uid, uid_resolver, audit)).await?
+    crate::runtime::run(start_loopback(
+        cfg,
+        bind_port,
+        expected_uid,
+        uid_resolver,
+        audit,
+    ))
+    .await?
 }
 
 // ----- VPN -----
@@ -102,6 +107,12 @@ pub async fn start_vpn_proxy(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    crate::runtime::run(crate::vpn::start_vpn(tun_fd, mtu, parsed_routes, uid_resolver, audit))
-        .await?
+    crate::runtime::run(crate::vpn::start_vpn(
+        tun_fd,
+        mtu,
+        parsed_routes,
+        uid_resolver,
+        audit,
+    ))
+    .await?
 }

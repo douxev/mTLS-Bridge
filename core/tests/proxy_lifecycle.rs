@@ -8,17 +8,11 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use mtls_bridge_core::config::{
-    ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust,
-};
+use mtls_bridge_core::config::{ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust};
 use mtls_bridge_core::error::Result;
 use mtls_bridge_core::init_crypto_provider;
-use mtls_bridge_core::loopback::{
-    start_loopback, AuditLogger, PeerUidResolver, ProxyEvent,
-};
-use rcgen::{
-    BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose,
-};
+use mtls_bridge_core::loopback::{start_loopback, AuditLogger, PeerUidResolver, ProxyEvent};
+use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -58,7 +52,8 @@ fn build_pki() -> Pki {
 
     let mut cli = CertificateParams::new(vec!["life-client".to_string()]).unwrap();
     cli.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-    cli.distinguished_name.push(DnType::CommonName, "life-client");
+    cli.distinguished_name
+        .push(DnType::CommonName, "life-client");
     let cli_key = KeyPair::generate().unwrap();
     let cli_cert = cli.signed_by(&cli_key, &ca_cert, &ca_key).unwrap();
 
@@ -89,7 +84,10 @@ fn parse_pkcs8(pem: &[u8]) -> PrivateKeyDer<'static> {
 
 /// Lit une réponse HTTP/1.1 complète (headers + body Content-Length).
 /// `None` sur EOF avant la moindre donnée.
-async fn read_response<S: AsyncRead + Unpin>(s: &mut S, buf: &mut Vec<u8>) -> Option<(String, Vec<u8>)> {
+async fn read_response<S: AsyncRead + Unpin>(
+    s: &mut S,
+    buf: &mut Vec<u8>,
+) -> Option<(String, Vec<u8>)> {
     let mut tmp = [0u8; 4096];
     let head_end = loop {
         if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
@@ -104,7 +102,11 @@ async fn read_response<S: AsyncRead + Unpin>(s: &mut S, buf: &mut Vec<u8>) -> Op
     let head = String::from_utf8(buf[..head_end].to_vec()).unwrap();
     let len: usize = head
         .lines()
-        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap()))
+        .find_map(|l| {
+            l.to_ascii_lowercase()
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse().unwrap())
+        })
         .unwrap_or(0);
     while buf.len() < head_end + len {
         let n = s.read(&mut tmp).await.unwrap();
@@ -126,10 +128,15 @@ async fn spawn_keepalive_server(pki: &Pki, bind: &str) -> std::io::Result<u16> {
     for ca in parse_certs(&pki.ca_pem) {
         roots.add(ca).unwrap();
     }
-    let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build().unwrap();
+    let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+        .build()
+        .unwrap();
     let server_cfg = ServerConfig::builder()
         .with_client_cert_verifier(verifier)
-        .with_single_cert(parse_certs(&pki.server_chain_pem), parse_pkcs8(&pki.server_key_pem))
+        .with_single_cert(
+            parse_certs(&pki.server_chain_pem),
+            parse_pkcs8(&pki.server_key_pem),
+        )
         .unwrap();
     let acceptor = TlsAcceptor::from(Arc::new(server_cfg));
     let listener = TcpListener::bind(bind).await?;
@@ -138,7 +145,9 @@ async fn spawn_keepalive_server(pki: &Pki, bind: &str) -> std::io::Result<u16> {
         while let Ok((s, _)) = listener.accept().await {
             let acc = acceptor.clone();
             tokio::spawn(async move {
-                let Ok(mut tls) = acc.accept(s).await else { return };
+                let Ok(mut tls) = acc.accept(s).await else {
+                    return;
+                };
                 let mut buf = Vec::new();
                 let mut tmp = [0u8; 4096];
                 loop {
@@ -166,10 +175,16 @@ async fn spawn_keepalive_server(pki: &Pki, bind: &str) -> std::io::Result<u16> {
                     } else if path == "/host" {
                         let host = req
                             .lines()
-                            .find_map(|l| l.split_once(':').filter(|(n, _)| n.eq_ignore_ascii_case("host")))
+                            .find_map(|l| {
+                                l.split_once(':')
+                                    .filter(|(n, _)| n.eq_ignore_ascii_case("host"))
+                            })
                             .map(|(_, v)| v.trim().to_string())
                             .unwrap_or_default();
-                        format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{host}", host.len())
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{host}",
+                            host.len()
+                        )
                     } else if path.starts_with("/next") {
                         "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 7\r\n\r\nnext-ok".to_string()
                     } else {
@@ -251,10 +266,15 @@ async fn rewritten_urls_carry_path_token_and_are_accepted() -> Result<()> {
     assert!(body.contains(&next), "body: {body}");
 
     let (head, _) = get(&mut s, &mut buf, "/TOK123/start").await;
-    assert!(head.contains(&format!("Location: {base}/next\r\n")), "head: {head}");
+    assert!(
+        head.contains(&format!("Location: {base}/next\r\n")),
+        "head: {head}"
+    );
 
     // Le client suit l'URL réécrite : le token est accepté et retiré.
-    let path = next.strip_prefix(&format!("http://127.0.0.1:{}", h.port())).unwrap();
+    let path = next
+        .strip_prefix(&format!("http://127.0.0.1:{}", h.port()))
+        .unwrap();
     let (head, body) = get(&mut s, &mut buf, path).await;
     assert!(head.starts_with("HTTP/1.1 200"), "head: {head}");
     assert_eq!(body, b"next-ok");
@@ -295,7 +315,13 @@ async fn stop_closes_active_sessions() -> Result<()> {
 
     // L'événement Stopped arrive une fois les sessions fermées.
     tokio::time::timeout(Duration::from_secs(3), async {
-        while !audit.0.lock().unwrap().iter().any(|e| matches!(e, ProxyEvent::Stopped)) {
+        while !audit
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, ProxyEvent::Stopped))
+        {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
@@ -337,7 +363,9 @@ async fn bridge_connects_to_ipv6_literal_upstream() -> Result<()> {
     h.stop();
     let events = audit.0.lock().unwrap().clone();
     assert!(
-        !events.iter().any(|e| matches!(e, ProxyEvent::BridgeFailed { .. })),
+        !events
+            .iter()
+            .any(|e| matches!(e, ProxyEvent::BridgeFailed { .. })),
         "events: {events:?}"
     );
     Ok(())
@@ -356,7 +384,9 @@ async fn start_vpn_closes_tun_fd_when_setup_fails() {
 
     init_crypto_provider();
     let (ours, mut theirs) = UnixStream::pair().unwrap();
-    theirs.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    theirs
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
 
     let route = VpnRoute {
         synthetic_ip: "192.0.2.1".parse().unwrap(),
@@ -384,7 +414,10 @@ async fn start_vpn_closes_tun_fd_when_setup_fails() {
         Arc::new(CollectingAudit::default()),
     )
     .await;
-    assert!(res.is_err(), "la route invalide doit faire échouer start_vpn");
+    assert!(
+        res.is_err(),
+        "la route invalide doit faire échouer start_vpn"
+    );
 
     let mut b = [0u8; 1];
     let n = theirs

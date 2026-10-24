@@ -13,14 +13,10 @@
 
 use std::sync::Arc;
 
-use mtls_bridge_core::config::{
-    ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust,
-};
+use mtls_bridge_core::config::{ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust};
 use mtls_bridge_core::proxy::{bridge_to_mtls_upstream, precompile_client_config};
 use mtls_bridge_core::{error::Result, init_crypto_provider};
-use rcgen::{
-    BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose,
-};
+use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -41,10 +37,7 @@ fn build_pki() -> Pki {
     // ---------- CA ----------
     let mut ca_params = CertificateParams::new(vec!["mtls_bridge-test-ca".to_string()]).unwrap();
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    ca_params.key_usages = vec![
-        KeyUsagePurpose::KeyCertSign,
-        KeyUsagePurpose::CrlSign,
-    ];
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     ca_params
         .distinguished_name
         .push(DnType::CommonName, "mtls_bridge test CA");
@@ -64,7 +57,8 @@ fn build_pki() -> Pki {
     let srv_cert = srv_params.signed_by(&srv_key, &ca_cert, &ca_key).unwrap();
 
     // ---------- Client ----------
-    let mut cli_params = CertificateParams::new(vec!["mtls_bridge-test-client".to_string()]).unwrap();
+    let mut cli_params =
+        CertificateParams::new(vec!["mtls_bridge-test-client".to_string()]).unwrap();
     cli_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     cli_params
         .distinguished_name
@@ -108,7 +102,10 @@ async fn spawn_mtls_echo_server(pki: &Pki) -> u16 {
 
     let server_cfg = ServerConfig::builder()
         .with_client_cert_verifier(client_verifier)
-        .with_single_cert(parse_certs(&pki.server_chain_pem), parse_pkcs8(&pki.server_key_pem))
+        .with_single_cert(
+            parse_certs(&pki.server_chain_pem),
+            parse_pkcs8(&pki.server_key_pem),
+        )
         .unwrap();
     let acceptor = TlsAcceptor::from(Arc::new(server_cfg));
 

@@ -5,17 +5,11 @@
 
 use std::sync::{Arc, Mutex};
 
-use mtls_bridge_core::config::{
-    ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust,
-};
+use mtls_bridge_core::config::{ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust};
 use mtls_bridge_core::error::Result;
 use mtls_bridge_core::init_crypto_provider;
-use mtls_bridge_core::loopback::{
-    start_loopback, AuditLogger, ProxyEvent, PeerUidResolver,
-};
-use rcgen::{
-    BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose,
-};
+use mtls_bridge_core::loopback::{start_loopback, AuditLogger, PeerUidResolver, ProxyEvent};
+use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
 use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -96,7 +90,10 @@ async fn spawn_mtls_echo_server(pki: &Pki) -> u16 {
         .unwrap();
     let server_cfg = ServerConfig::builder()
         .with_client_cert_verifier(verifier)
-        .with_single_cert(parse_certs(&pki.server_chain_pem), parse_pkcs8(&pki.server_key_pem))
+        .with_single_cert(
+            parse_certs(&pki.server_chain_pem),
+            parse_pkcs8(&pki.server_key_pem),
+        )
         .unwrap();
     let acceptor = TlsAcceptor::from(Arc::new(server_cfg));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -164,13 +161,10 @@ async fn connect_and_read(port: u16) -> Vec<u8> {
         .unwrap();
     s.shutdown().await.unwrap();
     let mut buf = Vec::new();
-    tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        s.read_to_end(&mut buf),
-    )
-    .await
-    .expect("timeout lecture")
-    .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), s.read_to_end(&mut buf))
+        .await
+        .expect("timeout lecture")
+        .unwrap();
     buf
 }
 
@@ -182,11 +176,7 @@ async fn try_connect_then_eof(port: u16) -> bool {
     let _ = s.write_all(b"GET /\r\n\r\n").await;
     let _ = s.shutdown().await;
     let mut buf = Vec::new();
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        s.read_to_end(&mut buf),
-    )
-    .await;
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), s.read_to_end(&mut buf)).await;
     buf.is_empty()
 }
 
@@ -284,9 +274,11 @@ async fn unknown_uid_is_soft_accepted() -> Result<()> {
     assert!(body.contains("HTTP/1.1 200 OK"), "réponse: {body}");
 
     let events = audit.0.lock().unwrap().clone();
-    assert!(events.iter().any(|e| matches!(
-        e,
-        ProxyEvent::Accepted { peer_uid: 0, .. }
-    )), "attendu Accepted{{peer_uid=0}} (soft-fail UID inconnu), events={events:?}");
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ProxyEvent::Accepted { peer_uid: 0, .. })),
+        "attendu Accepted{{peer_uid=0}} (soft-fail UID inconnu), events={events:?}"
+    );
     Ok(())
 }

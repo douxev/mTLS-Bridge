@@ -7,18 +7,12 @@
 
 use std::sync::Arc;
 
-use mtls_bridge_core::config::{
-    ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust,
-};
+use mtls_bridge_core::config::{ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust};
 use mtls_bridge_core::error::Result;
 use mtls_bridge_core::init_crypto_provider;
 use mtls_bridge_core::proxy::{bridge_to_mtls_upstream, precompile_client_config};
-use mtls_bridge_core::signer::{
-    scheme_to_rustls, KeystoreSigner, SignerError, TlsSignatureScheme,
-};
-use rcgen::{
-    BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose,
-};
+use mtls_bridge_core::signer::{scheme_to_rustls, KeystoreSigner, SignerError, TlsSignatureScheme};
+use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
 use rustls::crypto::aws_lc_rs;
 use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig};
@@ -42,9 +36,8 @@ impl TestSigner {
             .next()
             .unwrap()
             .unwrap();
-        let key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
-            der.secret_pkcs8_der().to_vec(),
-        ));
+        let key_der =
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.secret_pkcs8_der().to_vec()));
         let rustls_key = aws_lc_rs::sign::any_supported_type(&key_der).unwrap();
         Self { rustls_key }
     }
@@ -148,7 +141,10 @@ async fn spawn_mtls_echo_server(pki: &Pki) -> u16 {
 
     let server_cfg = ServerConfig::builder()
         .with_client_cert_verifier(client_verifier)
-        .with_single_cert(parse_certs(&pki.server_chain_pem), parse_pkcs8(&pki.server_key_pem))
+        .with_single_cert(
+            parse_certs(&pki.server_chain_pem),
+            parse_pkcs8(&pki.server_key_pem),
+        )
         .unwrap();
     let acceptor = TlsAcceptor::from(Arc::new(server_cfg));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -200,8 +196,7 @@ async fn callback_keystore_signer_completes_mtls_handshake() -> Result<()> {
 
     // Le signer "Keystore" simulé tient la clé client. La struct ProxyConfig
     // n'a *que* le handle + l'instance signer — pas la clé elle-même.
-    let signer: Arc<dyn KeystoreSigner> =
-        Arc::new(TestSigner::from_pkcs8_pem(&pki.client_key_pem));
+    let signer: Arc<dyn KeystoreSigner> = Arc::new(TestSigner::from_pkcs8_pem(&pki.client_key_pem));
 
     let cfg = ProxyConfig {
         id: "ks-test".into(),

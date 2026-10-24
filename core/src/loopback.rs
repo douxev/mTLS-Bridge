@@ -30,23 +30,53 @@ use crate::proxy::{bridge_session, precompile_client_config, stop_requested, url
 pub enum ProxyEvent {
     // Loopback (toujours per-config, mais on garde un config_id explicite pour
     // que Kotlin dispatch uniformément avec la VPN). -------------------------
-    BindOk { config_id: String, port: u16 },
-    BindFailed { config_id: String, reason: String },
-    Accepted { config_id: String, peer_uid: u32 },
-    RejectedUidMismatch { config_id: String, peer_uid: u32, expected_uid: u32 },
+    BindOk {
+        config_id: String,
+        port: u16,
+    },
+    BindFailed {
+        config_id: String,
+        reason: String,
+    },
+    Accepted {
+        config_id: String,
+        peer_uid: u32,
+    },
+    RejectedUidMismatch {
+        config_id: String,
+        peer_uid: u32,
+        expected_uid: u32,
+    },
     /// La résolution UID a échoué — fail-closed.
-    RejectedUidUnknown { config_id: String },
+    RejectedUidUnknown {
+        config_id: String,
+    },
     /// Requête refusée par le contrôle d'accès (token de path / cookie de
     /// session) : connexion fermée, upstream non contacté pour la première
     /// requête. Jamais de token, de cookie ni de chemin dans l'événement.
-    RejectedToken { config_id: String, reason: TokenRejection },
+    RejectedToken {
+        config_id: String,
+        reason: TokenRejection,
+    },
     // VPN ---------------------------------------------------------------------
-    VpnStarted { route_count: u32 },
-    VpnRouteHit { config_id: String, synthetic_ip: String, synthetic_port: u16 },
+    VpnStarted {
+        route_count: u32,
+    },
+    VpnRouteHit {
+        config_id: String,
+        synthetic_ip: String,
+        synthetic_port: u16,
+    },
     /// Pas de config_id : la route ne matche aucune config connue.
-    VpnRouteMissing { synthetic_ip: String, synthetic_port: u16 },
+    VpnRouteMissing {
+        synthetic_ip: String,
+        synthetic_port: u16,
+    },
     // Communs -----------------------------------------------------------------
-    BridgeFailed { config_id: String, reason: String },
+    BridgeFailed {
+        config_id: String,
+        reason: String,
+    },
     Stopped,
 }
 

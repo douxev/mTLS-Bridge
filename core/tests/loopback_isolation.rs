@@ -12,22 +12,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use mtls_bridge_core::config::{
-    ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust,
-};
+use mtls_bridge_core::config::{ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust};
 use mtls_bridge_core::error::Result;
 use mtls_bridge_core::ffi_api::{start_loopback_proxy, ProxyConfigSpec};
 use mtls_bridge_core::http_rewrite::TokenRejection;
 use mtls_bridge_core::init_crypto_provider;
-use mtls_bridge_core::loopback::{
-    start_loopback, AuditLogger, PeerUidResolver, ProxyEvent,
-};
-use mtls_bridge_core::signer::{
-    scheme_to_rustls, KeystoreSigner, SignerError, TlsSignatureScheme,
-};
-use rcgen::{
-    BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose,
-};
+use mtls_bridge_core::loopback::{start_loopback, AuditLogger, PeerUidResolver, ProxyEvent};
+use mtls_bridge_core::signer::{scheme_to_rustls, KeystoreSigner, SignerError, TlsSignatureScheme};
+use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, KeyPair, KeyUsagePurpose};
 use rustls::crypto::aws_lc_rs;
 use rustls::server::{NoServerSessionStorage, WebPkiClientVerifier};
 use rustls::{RootCertStore, ServerConfig};
@@ -67,7 +59,8 @@ fn build_pki() -> Pki {
 
     let mut cli = CertificateParams::new(vec!["iso-client".to_string()]).unwrap();
     cli.key_usages = vec![KeyUsagePurpose::DigitalSignature];
-    cli.distinguished_name.push(DnType::CommonName, "iso-client");
+    cli.distinguished_name
+        .push(DnType::CommonName, "iso-client");
     let cli_key = KeyPair::generate().unwrap();
     let cli_cert = cli.signed_by(&cli_key, &ca_cert, &ca_key).unwrap();
 
@@ -98,7 +91,10 @@ fn parse_pkcs8(pem: &[u8]) -> PrivateKeyDer<'static> {
 
 /// Lit une réponse HTTP/1.1 complète (headers + body Content-Length).
 /// `None` sur EOF avant la moindre donnée.
-async fn read_response<S: AsyncRead + Unpin>(s: &mut S, buf: &mut Vec<u8>) -> Option<(String, Vec<u8>)> {
+async fn read_response<S: AsyncRead + Unpin>(
+    s: &mut S,
+    buf: &mut Vec<u8>,
+) -> Option<(String, Vec<u8>)> {
     let mut tmp = [0u8; 4096];
     let head_end = loop {
         if let Some(p) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
@@ -113,7 +109,11 @@ async fn read_response<S: AsyncRead + Unpin>(s: &mut S, buf: &mut Vec<u8>) -> Op
     let head = String::from_utf8(buf[..head_end].to_vec()).unwrap();
     let len: usize = head
         .lines()
-        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap()))
+        .find_map(|l| {
+            l.to_ascii_lowercase()
+                .strip_prefix("content-length:")
+                .map(|v| v.trim().parse().unwrap())
+        })
         .unwrap_or(0);
     while buf.len() < head_end + len {
         let n = s.read(&mut tmp).await.unwrap();
@@ -136,10 +136,15 @@ async fn spawn_counting_server(pki: &Pki) -> (u16, Arc<AtomicUsize>) {
     for ca in parse_certs(&pki.ca_pem) {
         roots.add(ca).unwrap();
     }
-    let verifier = WebPkiClientVerifier::builder(Arc::new(roots)).build().unwrap();
+    let verifier = WebPkiClientVerifier::builder(Arc::new(roots))
+        .build()
+        .unwrap();
     let mut server_cfg = ServerConfig::builder()
         .with_client_cert_verifier(verifier)
-        .with_single_cert(parse_certs(&pki.server_chain_pem), parse_pkcs8(&pki.server_key_pem))
+        .with_single_cert(
+            parse_certs(&pki.server_chain_pem),
+            parse_pkcs8(&pki.server_key_pem),
+        )
         .unwrap();
     server_cfg.session_storage = Arc::new(NoServerSessionStorage {});
     server_cfg.send_tls13_tickets = 0;
@@ -153,7 +158,9 @@ async fn spawn_counting_server(pki: &Pki) -> (u16, Arc<AtomicUsize>) {
             counter.fetch_add(1, Ordering::SeqCst);
             let acc = acceptor.clone();
             tokio::spawn(async move {
-                let Ok(mut tls) = acc.accept(s).await else { return };
+                let Ok(mut tls) = acc.accept(s).await else {
+                    return;
+                };
                 let mut buf = Vec::new();
                 let mut tmp = [0u8; 4096];
                 loop {
@@ -172,7 +179,10 @@ async fn spawn_counting_server(pki: &Pki) -> (u16, Arc<AtomicUsize>) {
                     let resp = if path == "/cookie" {
                         let cookie = req
                             .lines()
-                            .find_map(|l| l.split_once(':').filter(|(n, _)| n.eq_ignore_ascii_case("cookie")))
+                            .find_map(|l| {
+                                l.split_once(':')
+                                    .filter(|(n, _)| n.eq_ignore_ascii_case("cookie"))
+                            })
                             .map(|(_, v)| v.trim().to_string())
                             .unwrap_or_default();
                         format!(
@@ -233,7 +243,12 @@ async fn send_get(s: &mut TcpStream, path: &str, extra_headers: &str) {
         .unwrap();
 }
 
-async fn get(s: &mut TcpStream, buf: &mut Vec<u8>, path: &str, extra_headers: &str) -> (String, Vec<u8>) {
+async fn get(
+    s: &mut TcpStream,
+    buf: &mut Vec<u8>,
+    path: &str,
+    extra_headers: &str,
+) -> (String, Vec<u8>) {
     send_get(s, path, extra_headers).await;
     tokio::time::timeout(Duration::from_secs(5), read_response(s, buf))
         .await
@@ -248,7 +263,11 @@ async fn assert_closed_without_response(s: &mut TcpStream) {
         .await
         .expect("le proxy doit fermer la connexion")
         .ok();
-    assert!(out.is_empty(), "aucune réponse attendue, reçu {:?}", String::from_utf8_lossy(&out));
+    assert!(
+        out.is_empty(),
+        "aucune réponse attendue, reçu {:?}",
+        String::from_utf8_lossy(&out)
+    );
 }
 
 /// Motifs des refus de token audités, une fois qu'il y en a `n` (l'événement
@@ -285,7 +304,10 @@ fn session_cookie(head: &str) -> String {
         .find(|l| l.starts_with("Set-Cookie: mtlsb_"))
         .unwrap_or_else(|| panic!("Set-Cookie de session absent: {head}"));
     let value = line.strip_prefix("Set-Cookie: ").unwrap();
-    assert!(value.ends_with("; HttpOnly; SameSite=Strict; Path=/"), "{value}");
+    assert!(
+        value.ends_with("; HttpOnly; SameSite=Strict; Path=/"),
+        "{value}"
+    );
     value.split(';').next().unwrap().to_string()
 }
 
@@ -300,7 +322,14 @@ async fn no_upstream_connection_before_first_request_is_validated() -> Result<()
     let (upstream, accepted) = spawn_counting_server(&pki).await;
     let cfg = make_cfg(&pki, upstream, Some("TOK123"));
     let audit = Arc::new(CollectingAudit::default());
-    let h = start_loopback(cfg, 0, 1234, Arc::new(NoUid), audit.clone() as Arc<dyn AuditLogger>).await?;
+    let h = start_loopback(
+        cfg,
+        0,
+        1234,
+        Arc::new(NoUid),
+        audit.clone() as Arc<dyn AuditLogger>,
+    )
+    .await?;
     let port = h.port();
 
     // Connexion ouverte puis fermée sans rien envoyer.
@@ -321,7 +350,8 @@ async fn no_upstream_connection_before_first_request_is_validated() -> Result<()
     assert_closed_without_response(&mut s).await;
     // Pas du HTTP (ClientHello TLS direct sur le port).
     let mut s = TcpStream::connect(("127.0.0.1", port)).await?;
-    s.write_all(b"\x16\x03\x01\x00\xa5\x01\x00\x00\xa1\x03\x03\r\n\r\n").await?;
+    s.write_all(b"\x16\x03\x01\x00\xa5\x01\x00\x00\xa1\x03\x03\r\n\r\n")
+        .await?;
     assert_closed_without_response(&mut s).await;
     // Headers incomplets puis fermeture.
     let mut s = TcpStream::connect(("127.0.0.1", port)).await?;
@@ -330,7 +360,11 @@ async fn no_upstream_connection_before_first_request_is_validated() -> Result<()
     assert_closed_without_response(&mut s).await;
 
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(accepted.load(Ordering::SeqCst), 0, "aucune connexion upstream attendue");
+    assert_eq!(
+        accepted.load(Ordering::SeqCst),
+        0,
+        "aucune connexion upstream attendue"
+    );
 
     // Requête légitime : une seule connexion upstream, la sienne.
     let mut s = TcpStream::connect(("127.0.0.1", port)).await?;
@@ -362,7 +396,9 @@ async fn no_upstream_connection_before_first_request_is_validated() -> Result<()
     h.stop();
     let events = audit.0.lock().unwrap().clone();
     assert!(
-        !events.iter().any(|e| matches!(e, ProxyEvent::BridgeFailed { .. })),
+        !events
+            .iter()
+            .any(|e| matches!(e, ProxyEvent::BridgeFailed { .. })),
         "events: {events:?}"
     );
     Ok(())
@@ -378,7 +414,14 @@ async fn session_cookie_lets_absolute_paths_through() -> Result<()> {
     let (upstream, _) = spawn_counting_server(&pki).await;
     let cfg = make_cfg(&pki, upstream, Some("TOK123"));
     let audit = Arc::new(CollectingAudit::default());
-    let h = start_loopback(Arc::clone(&cfg), 0, 1234, Arc::new(NoUid), audit.clone() as Arc<dyn AuditLogger>).await?;
+    let h = start_loopback(
+        Arc::clone(&cfg),
+        0,
+        1234,
+        Arc::new(NoUid),
+        audit.clone() as Arc<dyn AuditLogger>,
+    )
+    .await?;
 
     let mut s = TcpStream::connect(("127.0.0.1", h.port())).await?;
     let mut buf = Vec::new();
@@ -390,12 +433,31 @@ async fn session_cookie_lets_absolute_paths_through() -> Result<()> {
     // qui est retiré avant l'upstream (les autres cookies passent).
     let mut s = TcpStream::connect(("127.0.0.1", h.port())).await?;
     let mut buf = Vec::new();
-    let (head, body) = get(&mut s, &mut buf, "/cookie", &format!("Cookie: lang=fr; {cookie}\r\n")).await;
+    let (head, body) = get(
+        &mut s,
+        &mut buf,
+        "/cookie",
+        &format!("Cookie: lang=fr; {cookie}\r\n"),
+    )
+    .await;
     assert!(head.starts_with("HTTP/1.1 200"), "head: {head}");
-    assert_eq!(String::from_utf8(body).unwrap(), "lang=fr", "Cookie vu par l'upstream");
-    assert!(!head.contains("Set-Cookie"), "cookie valide : rien à reposer: {head}");
+    assert_eq!(
+        String::from_utf8(body).unwrap(),
+        "lang=fr",
+        "Cookie vu par l'upstream"
+    );
+    assert!(
+        !head.contains("Set-Cookie"),
+        "cookie valide : rien à reposer: {head}"
+    );
     // Même connexion keepalive : toujours accepté.
-    let (_, body) = get(&mut s, &mut buf, "/cookie", &format!("Cookie: {cookie}\r\n")).await;
+    let (_, body) = get(
+        &mut s,
+        &mut buf,
+        "/cookie",
+        &format!("Cookie: {cookie}\r\n"),
+    )
+    .await;
     assert!(body.is_empty(), "header Cookie retiré en entier");
 
     // Redémarrage : nouveau secret, l'ancien cookie ne vaut plus rien.
@@ -406,7 +468,13 @@ async fn session_cookie_lets_absolute_paths_through() -> Result<()> {
     assert_closed_without_response(&mut s).await;
     let mut s = TcpStream::connect(("127.0.0.1", h.port())).await?;
     let mut buf = Vec::new();
-    let (head, _) = get(&mut s, &mut buf, "/TOK123/next", &format!("Cookie: {cookie}\r\n")).await;
+    let (head, _) = get(
+        &mut s,
+        &mut buf,
+        "/TOK123/next",
+        &format!("Cookie: {cookie}\r\n"),
+    )
+    .await;
     let renewed = session_cookie(&head);
     assert_ne!(renewed, cookie);
     h.stop();
@@ -434,7 +502,11 @@ impl KeystoreSigner for GatedSigner {
         if self.armed.swap(false, Ordering::SeqCst) {
             let _ = self.entered.send(());
             // Appel synchrone bloquant, comme le callback Kotlin.
-            let _ = self.release.lock().unwrap().recv_timeout(Duration::from_secs(10));
+            let _ = self
+                .release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(10));
         }
         self.key
             .choose_scheme(&[scheme_to_rustls(scheme)])
