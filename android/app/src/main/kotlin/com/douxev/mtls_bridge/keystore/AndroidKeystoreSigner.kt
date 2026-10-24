@@ -1,14 +1,13 @@
 package com.douxev.mtls_bridge.keystore
 
-import android.security.keystore.KeyInfo
 import android.security.keystore.KeyProperties
 import com.douxev.mtls_bridge.ffi.KeystoreSigner
 import com.douxev.mtls_bridge.ffi.SignerException
 import com.douxev.mtls_bridge.ffi.TlsSignatureScheme
-import java.security.KeyFactory
 import java.security.KeyStore
 import java.security.PrivateKey
 import java.security.Signature
+import java.security.interfaces.ECPublicKey
 import java.security.spec.AlgorithmParameterSpec
 import java.security.spec.MGF1ParameterSpec
 import java.security.spec.PSSParameterSpec
@@ -57,18 +56,16 @@ class AndroidKeystoreSigner : KeystoreSigner {
             ?: return emptyList()
         return when (pk.algorithm) {
             KeyProperties.KEY_ALGORITHM_EC -> {
-                // On déduit la courbe de KeyInfo.
-                val info = runCatching {
-                    KeyFactory.getInstance(pk.algorithm, "AndroidKeyStore")
-                        .getKeySpec(pk, KeyInfo::class.java)
-                }.getOrNull()
-                val size = info?.keySize ?: 256
-                when {
-                    size >= 384 -> listOf(
-                        TlsSignatureScheme.ECDSA_NISTP384_SHA384,
-                        TlsSignatureScheme.ECDSA_NISTP256_SHA256,
-                    )
-                    else -> listOf(TlsSignatureScheme.ECDSA_NISTP256_SHA256)
+                // TLS 1.3 lie le schéma ECDSA à la courbe de la clé : une clé
+                // P-384 ne peut signer qu'en ecdsa_secp384r1_sha384. On lit la
+                // courbe sur la clé publique du cert (fiable, contrairement à un
+                // défaut sur KeyInfo) ; courbe inconnue (P-521…) ⇒ rien.
+                val curveBits = (androidKs.getCertificate(keyHandle)?.publicKey as? ECPublicKey)
+                    ?.params?.curve?.field?.fieldSize
+                when (curveBits) {
+                    256 -> listOf(TlsSignatureScheme.ECDSA_NISTP256_SHA256)
+                    384 -> listOf(TlsSignatureScheme.ECDSA_NISTP384_SHA384)
+                    else -> emptyList()
                 }
             }
             KeyProperties.KEY_ALGORITHM_RSA -> {

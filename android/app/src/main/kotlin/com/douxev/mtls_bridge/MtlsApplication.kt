@@ -23,9 +23,20 @@ class MtlsApplication : Application() {
         super.onCreate()
         // Active le logger Rust → adb logcat tag "mtls_bridge.rust".
         com.douxev.mtls_bridge.ffi.initLogging()
-        // Lance/coupe les services loopback en suivant le flag `enabled` des
-        // configs. À la première ouverture après reboot du device, ça redémarre
-        // tous les loopbacks qui étaient enabled.
+        // Pas de coordinator.start() ici : le process peut avoir été lancé en
+        // arrière-plan (receiver de notification, restart sticky du service) et
+        // Android 12+ y interdit startForegroundService
+        // (ForegroundServiceStartNotAllowedException). Le restart sticky est
+        // géré par LoopbackProxyService lui-même.
+    }
+
+    /**
+     * Lance/coupe les services loopback en suivant le flag `enabled` des
+     * configs. Appelé par MainActivity (premier plan garanti) : à la première
+     * ouverture après reboot du device, ça redémarre tous les loopbacks qui
+     * étaient enabled. Idempotent.
+     */
+    fun startLoopbackCoordinator() {
         coordinator.start()
     }
 

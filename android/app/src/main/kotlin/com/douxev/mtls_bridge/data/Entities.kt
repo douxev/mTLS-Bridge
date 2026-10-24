@@ -63,6 +63,22 @@ data class ConfigEntity(
      * clé" sur le détail de la config.
      */
     val needsKeystoreRefresh: Boolean = false,
+    /**
+     * Loopback : token secret optionnel inséré dans le path HTTP pour isoler
+     * cette config des autres apps du device. URL effective :
+     * `http://127.0.0.1:PORT/<pathToken>/`. Le proxy refuse fail-closed les
+     * requêtes dont le path ne commence pas par ce préfixe. Remplace la
+     * défense par UID, inutile sur Android pour les apps non-VPN.
+     * `null` ⇒ pas de check (URL plain http://127.0.0.1:PORT/).
+     */
+    val pathToken: String? = null,
+    /**
+     * Loopback : hôtes canoniques additionnels (sans scheme) que le proxy
+     * réécrit vers son URL loopback, quand le serveur émet un autre nom que
+     * [upstreamHost] (ex. Nextcloud `overwrite.cli.url`). Stocké normalisé,
+     * séparé par des virgules — voir [CanonicalHosts]. `null` ⇒ aucun.
+     */
+    val extraCanonicalHosts: String? = null,
 ) {
     // Room exige equals/hashCode manuels quand on a des ByteArray (qui sinon
     // comparent par identité, ce qui casse les diffs Flow).
@@ -85,7 +101,9 @@ data class ConfigEntity(
             securityLevel == other.securityLevel &&
             createdAtEpochMs == other.createdAtEpochMs &&
             enabled == other.enabled &&
-            needsKeystoreRefresh == other.needsKeystoreRefresh
+            needsKeystoreRefresh == other.needsKeystoreRefresh &&
+            pathToken == other.pathToken &&
+            extraCanonicalHosts == other.extraCanonicalHosts
     }
 
     override fun hashCode(): Int {
@@ -106,8 +124,33 @@ data class ConfigEntity(
         r = 31 * r + createdAtEpochMs.hashCode()
         r = 31 * r + enabled.hashCode()
         r = 31 * r + needsKeystoreRefresh.hashCode()
+        r = 31 * r + (pathToken?.hashCode() ?: 0)
+        r = 31 * r + (extraCanonicalHosts?.hashCode() ?: 0)
         return r
     }
+}
+
+/** Encodage de [ConfigEntity.extraCanonicalHosts] (colonne texte unique). */
+object CanonicalHosts {
+    /**
+     * Saisie libre (virgules, espaces ou retours à la ligne) → valeur stockée.
+     * Tolère un scheme ou un path collés par erreur ; `null` si vide. Un
+     * `:port` est conservé (le core réécrit `https://<hôte[:port]>`).
+     */
+    fun normalize(input: String?): String? =
+        parse(input).takeIf { it.isNotEmpty() }?.joinToString(",")
+
+    fun parse(stored: String?): List<String> =
+        stored.orEmpty()
+            .split(',', ' ', '\n', '\t', ';')
+            .map { h ->
+                h.trim()
+                    .lowercase()
+                    .removePrefix("https://").removePrefix("http://")
+                    .substringBefore('/')
+            }
+            .filter { it.isNotEmpty() }
+            .distinct()
 }
 
 @Entity(

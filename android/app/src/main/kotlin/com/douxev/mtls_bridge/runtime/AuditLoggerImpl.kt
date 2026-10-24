@@ -4,6 +4,7 @@ import com.douxev.mtls_bridge.data.AuditDao
 import com.douxev.mtls_bridge.data.AuditEventEntity
 import com.douxev.mtls_bridge.ffi.AuditLogger
 import com.douxev.mtls_bridge.ffi.ProxyEvent
+import com.douxev.mtls_bridge.ffi.TokenRejection
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -74,6 +75,9 @@ class AuditLoggerImpl(
             )
         is ProxyEvent.RejectedUidUnknown ->
             Triple("REJECTED_UID_UNKNOWN", "", event.configId)
+        // Motif seul : jamais le token, le cookie ni le chemin demandé.
+        is ProxyEvent.RejectedToken ->
+            Triple("REJECTED_TOKEN", tokenRejectionDetails(event.reason), event.configId)
         is ProxyEvent.VpnStarted ->
             Triple("VPN_STARTED", "routes=${event.routeCount}", null)
         is ProxyEvent.VpnRouteHit ->
@@ -92,5 +96,11 @@ class AuditLoggerImpl(
             Triple("BRIDGE_FAILED", event.reason, event.configId)
         is ProxyEvent.Stopped ->
             Triple("STOPPED", "", null)
+    }
+
+    private fun tokenRejectionDetails(reason: TokenRejection): String = when (reason) {
+        TokenRejection.INVALID_TOKEN -> "token ou cookie de session absent ou invalide"
+        TokenRejection.NOT_HTTP -> "flux non HTTP"
+        TokenRejection.HEADERS_TOO_LARGE -> "headers trop gros"
     }
 }

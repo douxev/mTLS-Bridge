@@ -15,6 +15,9 @@ interface ConfigDao {
     @Query("SELECT * FROM configs WHERE id = :id")
     suspend fun byId(id: String): ConfigEntity?
 
+    @Query("SELECT * FROM configs")
+    suspend fun all(): List<ConfigEntity>
+
     @Query("SELECT * FROM configs WHERE targetPackage = :pkg LIMIT 1")
     suspend fun findByTargetPackage(pkg: String): ConfigEntity?
 
@@ -29,6 +32,9 @@ interface ConfigDao {
 
     @Query("UPDATE configs SET enabled = :enabled WHERE id = :id")
     suspend fun setEnabled(id: String, enabled: Boolean)
+
+    @Query("UPDATE configs SET enabled = 0 WHERE mode = :mode")
+    suspend fun disableAllOfMode(mode: ProxyMode)
 }
 
 @Dao

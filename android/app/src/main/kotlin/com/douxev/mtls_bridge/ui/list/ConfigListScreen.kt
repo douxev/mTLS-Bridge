@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
@@ -30,6 +31,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
@@ -38,6 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +59,10 @@ import com.douxev.mtls_bridge.data.ProxyMode
 import com.douxev.mtls_bridge.runtime.SafFileUtils
 import com.douxev.mtls_bridge.service.ProxyLauncher
 import com.douxev.mtls_bridge.ui.common.BadgeRow
+import com.douxev.mtls_bridge.ui.common.launchOrExplain
+import com.douxev.mtls_bridge.ui.common.rememberLocalNetworkGate
+import com.douxev.mtls_bridge.ui.tv.LocalIsTv
+import com.douxev.mtls_bridge.ui.tv.tvFocusHighlight
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -65,6 +72,7 @@ fun ConfigListScreen(
     onConfigClick: (id: String) -> Unit,
     onEditClick: (id: String) -> Unit,
     onHelpClick: () -> Unit,
+    onRemoteClick: () -> Unit,
     vm: ConfigListViewModel = viewModel(factory = ConfigListViewModel.Factory),
 ) {
     val configs by vm.configs.collectAsStateWithLifecycle()
@@ -72,6 +80,16 @@ fun ConfigListScreen(
     val app = context.applicationContext as MtlsApplication
     val vpnRunning by app.vpnRunning.collectAsStateWithLifecycle()
     val hasVpnConfigs = configs.any { it.mode == ProxyMode.VPN }
+    val localNetworkGate = rememberLocalNetworkGate()
+    val isTv = LocalIsTv.current
+
+    // Proxies démarrés sans geste ici (ouverture de l'app, import de bundle) :
+    // permission réseau local (Android 17) demandée une fois s'il le faut.
+    val activeUpstreams = configs
+        .filter { (it.mode == ProxyMode.LOOPBACK && it.enabled) || (it.mode == ProxyMode.VPN && vpnRunning) }
+        .map { it.upstreamHost }
+        .distinct()
+    LaunchedEffect(activeUpstreams) { localNetworkGate.checkQuietly(activeUpstreams) }
 
     val vpnPrep = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -85,17 +103,31 @@ fun ConfigListScreen(
     var showExportDialog by remember { mutableStateOf(false) }
     var pendingExportIds by remember { mutableStateOf<Set<String>?>(null) }
     var deleteImportFile by remember { mutableStateOf(false) }
-    var pendingImportUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var pendingDelete by remember { mutableStateOf<ConfigEntity?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
-        if (uri != null) scope.launch {
-            val bytes = vm.exportToZip(pendingExportIds)
-            context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
-            Toast.makeText(context, "${bytes.size / 1024} ko exportés", Toast.LENGTH_SHORT).show()
-        }
+        // Capturer la sélection AVANT de la remettre à null : la coroutine
+        // s'exécute après ce callback et lirait sinon null (= tout exporter).
+        val ids = pendingExportIds
         pendingExportIds = null
+        if (uri == null) return@rememberLauncherForActivityResult
+        if (ids == null) {
+            // Sélection perdue (process tué pendant le sélecteur de fichier) :
+            // on n'exporte surtout pas tout par défaut.
+            Toast.makeText(context, "Sélection perdue, relance l'export", Toast.LENGTH_LONG).show()
+            return@rememberLauncherForActivityResult
+        }
+        scope.launch {
+            try {
+                val bytes = vm.exportToZip(ids)
+                SafFileUtils.writeBytes(context, uri, bytes)
+                Toast.makeText(context, "${bytes.size / 1024} ko exportés", Toast.LENGTH_SHORT).show()
+            } catch (t: Throwable) {
+                Toast.makeText(context, "Export échoué : ${t.message}", Toast.LENGTH_LONG).show()
+            }
+        }
     }
     var importPassphrasePending by remember {
         mutableStateOf<Pair<android.net.Uri, ByteArray>?>(null)
@@ -104,9 +136,8 @@ fun ConfigListScreen(
         ActivityResultContracts.GetContent()
     ) { uri ->
         if (uri != null) scope.launch {
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: return@launch
             try {
+                val bytes = SafFileUtils.readBytes(context, uri)
                 val preview = vm.peekImportZip(bytes)
                 if (preview.needsPassphrase) {
                     // Deployment bundle : on demande la passphrase commune des .p12.
@@ -150,13 +181,24 @@ fun ConfigListScreen(
         )
     }
 
+    pendingDelete?.let { cfg ->
+        DeleteConfirmDialog(
+            config = cfg,
+            onConfirm = {
+                vm.delete(cfg.id)
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        )
+    }
+
     if (showExportDialog) {
         ExportSelectionDialog(
             configs = configs,
             onConfirm = { selected ->
                 showExportDialog = false
                 pendingExportIds = selected
-                exportLauncher.launch("mtls_bridge-backup.zip")
+                exportLauncher.launchOrExplain(context, "mtls_bridge-backup.zip")
             },
             onDismiss = { showExportDialog = false },
         )
@@ -184,7 +226,7 @@ fun ConfigListScreen(
                             text = { Text("Importer…") },
                             onClick = {
                                 menuOpen = false
-                                importLauncher.launch("application/zip")
+                                importLauncher.launchOrExplain(context, "application/zip")
                             },
                         )
                         DropdownMenuItem(
@@ -198,6 +240,13 @@ fun ConfigListScreen(
                                 }
                             },
                             onClick = { deleteImportFile = !deleteImportFile },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Configuration à distance…") },
+                            onClick = {
+                                menuOpen = false
+                                onRemoteClick()
+                            },
                         )
                         DropdownMenuItem(
                             text = { Text("Aide & déploiement") },
@@ -219,15 +268,21 @@ fun ConfigListScreen(
         },
     ) { padding ->
         if (configs.isEmpty()) {
-            EmptyState(padding)
+            EmptyState(padding, onRemoteClick)
         } else {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentPadding = PaddingValues(16.dp),
+                // Marge basse : la dernière carte ne doit pas finir sous le FAB.
+                contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                // Sur TV, saisir hôte, .p12 et passphrase à la télécommande est
+                // pénible : la console web est mise en avant.
+                if (isTv) {
+                    item { RemoteConfigCard(onRemoteClick) }
+                }
                 if (hasVpnConfigs) {
                     item {
                         VpnGlobalToggle(
@@ -236,9 +291,14 @@ fun ConfigListScreen(
                                 if (vpnRunning) {
                                     ProxyLauncher.stopVpn(context)
                                 } else {
-                                    val prep = ProxyLauncher.vpnPrepareIntentIfNeeded(context)
-                                    if (prep != null) vpnPrep.launch(prep)
-                                    else ProxyLauncher.startVpnGlobal(context)
+                                    val vpnHosts = configs
+                                        .filter { it.mode == ProxyMode.VPN }
+                                        .map { it.upstreamHost }
+                                    localNetworkGate.runAfterCheck(vpnHosts) {
+                                        val prep = ProxyLauncher.vpnPrepareIntentIfNeeded(context)
+                                        if (prep != null) vpnPrep.launch(prep)
+                                        else ProxyLauncher.startVpnGlobal(context)
+                                    }
                                 }
                             },
                             configCount = configs.count { it.mode == ProxyMode.VPN },
@@ -250,8 +310,16 @@ fun ConfigListScreen(
                         config = cfg,
                         onClick = { onConfigClick(cfg.id) },
                         onEdit = { onEditClick(cfg.id) },
-                        onDelete = { vm.delete(cfg.id) },
-                        onToggleEnabled = { vm.setEnabled(cfg.id, it) },
+                        onDelete = { pendingDelete = cfg },
+                        onToggleEnabled = { enabled ->
+                            if (enabled) {
+                                localNetworkGate.runAfterCheck(listOf(cfg.upstreamHost)) {
+                                    vm.setEnabled(cfg.id, true)
+                                }
+                            } else {
+                                vm.setEnabled(cfg.id, false)
+                            }
+                        },
                     )
                 }
             }
@@ -262,7 +330,7 @@ fun ConfigListScreen(
 @Composable
 private fun VpnGlobalToggle(running: Boolean, onToggle: () -> Unit, configCount: Int) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().tvFocusHighlight(),
         colors = androidx.compose.material3.CardDefaults.cardColors(
             containerColor = if (running)
                 MaterialTheme.colorScheme.tertiaryContainer
@@ -332,6 +400,31 @@ private fun BundlePassphraseDialog(
 }
 
 @Composable
+private fun DeleteConfirmDialog(
+    config: ConfigEntity,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Supprimer « ${config.displayName} » ?") },
+        text = {
+            Text(
+                "La clé privée est effacée du Keystore et ne peut pas être " +
+                    "récupérée : il faudra ré-importer le .p12 d'origine pour " +
+                    "recréer cette config.",
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Supprimer", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annuler") } },
+    )
+}
+
+@Composable
 private fun ExportSelectionDialog(
     configs: List<ConfigEntity>,
     onConfirm: (Set<String>) -> Unit,
@@ -390,7 +483,7 @@ private fun ExportSelectionDialog(
 }
 
 @Composable
-private fun EmptyState(padding: PaddingValues) {
+private fun EmptyState(padding: PaddingValues, onRemoteClick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -408,6 +501,31 @@ private fun EmptyState(padding: PaddingValues) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        Spacer(Modifier.padding(top = 16.dp))
+        OutlinedButton(
+            onClick = onRemoteClick,
+            modifier = Modifier.tvFocusHighlight(ButtonDefaults.outlinedShape),
+        ) {
+            Text("Configurer depuis un ordinateur ou un smartphone")
+        }
+    }
+}
+
+@Composable
+private fun RemoteConfigCard(onClick: () -> Unit) {
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().tvFocusHighlight(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text("Configuration à distance", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Ouvre une page web sur le réseau local pour créer et modifier les " +
+                    "configs depuis le navigateur d'un ordinateur ou d'un smartphone.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
     }
 }
 
@@ -421,7 +539,7 @@ private fun ConfigCard(
 ) {
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().tvFocusHighlight(),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {

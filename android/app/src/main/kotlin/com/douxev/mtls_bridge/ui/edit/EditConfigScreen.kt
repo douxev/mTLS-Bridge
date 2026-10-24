@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -36,6 +38,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.douxev.mtls_bridge.data.ProxyMode
+import com.douxev.mtls_bridge.ui.add.ExtraCanonicalHostsField
+import com.douxev.mtls_bridge.ui.common.rememberLocalNetworkGate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -45,6 +49,7 @@ fun EditConfigScreen(
     vm: EditConfigViewModel = viewModel(factory = EditConfigViewModel.Factory),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val localNetworkGate = rememberLocalNetworkGate()
 
     LaunchedEffect(state.success) { if (state.success) onSaved() }
 
@@ -64,6 +69,9 @@ fun EditConfigScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                // Edge-to-edge : réserve la hauteur du clavier (cf. AddConfigScreen).
+                .consumeWindowInsets(padding)
+                .imePadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -163,6 +171,25 @@ fun EditConfigScreen(
                     enabled = state.loaded,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                EditPathTokenSection(
+                    enabled = state.pathTokenEnabled,
+                    token = state.pathToken,
+                    loaded = state.loaded,
+                    onToggle = { v -> vm.update { copy(pathTokenEnabled = v) } },
+                    onRegenerate = {
+                        vm.update {
+                            copy(pathToken = com.douxev.mtls_bridge.data.PathTokenGen.generate())
+                        }
+                    },
+                    previewUrl = if (state.pathTokenEnabled)
+                        "http://127.0.0.1:${state.loopbackPort}/${state.pathToken}/"
+                    else "http://127.0.0.1:${state.loopbackPort}/",
+                )
+                ExtraCanonicalHostsField(
+                    value = state.extraCanonicalHosts,
+                    onValueChange = { v -> vm.update { copy(extraCanonicalHosts = v) } },
+                    enabled = state.loaded,
+                )
             }
 
             state.error?.let { err ->
@@ -170,7 +197,9 @@ fun EditConfigScreen(
             }
 
             Button(
-                onClick = { vm.submit() },
+                // L'hôte upstream peut changer : permission réseau local
+                // (Android 17) avant que le coordinator ne relance le proxy.
+                onClick = { localNetworkGate.runAfterCheck(listOf(state.upstreamHost)) { vm.submit() } },
                 enabled = state.loaded && !state.submitting,
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -222,6 +251,73 @@ private fun AppPicker(state: EditConfigUiState, vm: EditConfigViewModel) {
                     },
                 )
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditPathTokenSection(
+    enabled: Boolean,
+    token: String,
+    loaded: Boolean,
+    onToggle: (Boolean) -> Unit,
+    onRegenerate: () -> Unit,
+    previewUrl: String,
+) {
+    androidx.compose.material3.Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                androidx.compose.material3.Switch(
+                    checked = enabled,
+                    onCheckedChange = onToggle,
+                    enabled = loaded,
+                )
+                Column(modifier = Modifier.padding(start = 8.dp)) {
+                    Text(
+                        "Token d'isolation dans l'URL",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        "Recommandé : empêche les autres apps du téléphone d'utiliser " +
+                            "votre certificat via le port loopback. Les webviews " +
+                            "(Jellyfin Android, Nextcloud) fonctionnent grâce au cookie " +
+                            "de session posé par la première page ouverte avec le token. " +
+                            "Changer le token invalide l'URL configurée dans l'app cible — " +
+                            "il faudra la recopier après sauvegarde.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (enabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = token,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.TextButton(
+                        onClick = onRegenerate,
+                        enabled = loaded,
+                    ) { Text("Régénérer") }
+                }
+            }
+            Text(
+                text = previewUrl,
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }

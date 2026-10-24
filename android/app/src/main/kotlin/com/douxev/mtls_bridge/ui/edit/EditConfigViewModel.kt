@@ -1,8 +1,6 @@
 package com.douxev.mtls_bridge.ui.edit
 
 import android.app.Application
-import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelProvider
@@ -13,7 +11,9 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.douxev.mtls_bridge.MtlsApplication
 import com.douxev.mtls_bridge.data.ConfigRepository
 import com.douxev.mtls_bridge.data.ProxyMode
+import com.douxev.mtls_bridge.data.SyntheticEndpoints
 import com.douxev.mtls_bridge.ui.add.InstalledApp
+import com.douxev.mtls_bridge.ui.add.loadLaunchableApps
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -25,7 +25,7 @@ import kotlinx.coroutines.launch
  * clé Keystore (qui sont liés à l'alias = configId). Pour faire tourner les
  * certs, supprime + recrée. Ici on n'autorise que la modif des métadonnées :
  * nom, app cible, hôte/port upstream, SNI, mode, IP/port synthétique ou
- * port loopback.
+ * port loopback, token et hôtes canoniques.
  */
 data class EditConfigUiState(
     val displayName: String = "",
@@ -35,8 +35,11 @@ data class EditConfigUiState(
     val sni: String = "",
     val mode: ProxyMode = ProxyMode.VPN,
     val syntheticIp: String = "192.0.2.1",
-    val syntheticPort: String = "5001",
+    val syntheticPort: String = SyntheticEndpoints.DEFAULT_PORT.toString(),
     val loopbackPort: String = "0",
+    val pathTokenEnabled: Boolean = false,
+    val pathToken: String = "",
+    val extraCanonicalHosts: String = "",
     val installedApps: List<InstalledApp> = emptyList(),
     val loaded: Boolean = false,
     val submitting: Boolean = false,
@@ -60,6 +63,13 @@ class EditConfigViewModel(
                 _state.update { it.copy(loaded = true, error = "config introuvable") }
                 return@launch
             }
+            // Config loopback qui passerait en VPN : on propose d'emblée un
+            // couple IP/port libre plutôt qu'un 192.0.2.1:5001 en conflit.
+            val (freeIp, freePort) = if (cfg.syntheticIp.isNullOrBlank() || cfg.syntheticPort == null) {
+                repo.allocateSyntheticEndpoint(excludeId = configId)
+            } else {
+                cfg.syntheticIp to cfg.syntheticPort
+            }
             _state.update {
                 it.copy(
                     loaded = true,
@@ -69,29 +79,20 @@ class EditConfigViewModel(
                     upstreamPort = cfg.upstreamPort.toString(),
                     sni = cfg.sni.orEmpty(),
                     mode = cfg.mode,
-                    syntheticIp = cfg.syntheticIp.orEmpty().ifBlank { "192.0.2.1" },
-                    syntheticPort = (cfg.syntheticPort ?: 5001).toString(),
+                    syntheticIp = freeIp,
+                    syntheticPort = freePort.toString(),
                     loopbackPort = (cfg.loopbackPort ?: 0).toString(),
+                    pathTokenEnabled = !cfg.pathToken.isNullOrBlank(),
+                    pathToken = cfg.pathToken.orEmpty().ifBlank {
+                        com.douxev.mtls_bridge.data.PathTokenGen.generate()
+                    },
+                    extraCanonicalHosts = cfg.extraCanonicalHosts.orEmpty()
+                        .replace(",", ", "),
                 )
             }
         }
-        loadInstalledApps()
-    }
-
-    private fun loadInstalledApps() {
         viewModelScope.launch {
-            val pm = app.packageManager
-            val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-                .filter { pm.getLaunchIntentForPackage(it.packageName) != null }
-                .filter { it.flags and ApplicationInfo.FLAG_SYSTEM == 0 ||
-                    it.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP != 0 }
-                .map {
-                    InstalledApp(
-                        packageName = it.packageName,
-                        label = pm.getApplicationLabel(it).toString(),
-                    )
-                }
-                .sortedBy { it.label.lowercase() }
+            val apps = loadLaunchableApps(app.packageManager)
             _state.update { it.copy(installedApps = apps) }
         }
     }
@@ -119,7 +120,14 @@ class EditConfigViewModel(
                         ?.takeIf { s.mode == ProxyMode.VPN },
                     loopbackPort = s.loopbackPort.toIntOrNull()
                         ?.takeIf { s.mode == ProxyMode.LOOPBACK },
+                    pathToken = s.pathToken.takeIf {
+                        s.mode == ProxyMode.LOOPBACK && s.pathTokenEnabled && it.isNotBlank()
+                    },
+                    extraCanonicalHosts = s.extraCanonicalHosts.takeIf { s.mode == ProxyMode.LOOPBACK },
                 )
+                // Pas de restart ici : le runtime Rust copie les champs au
+                // démarrage, et LoopbackCoordinator redémarre le proxy dès que
+                // l'empreinte de la config change en base (si elle est enabled).
                 _state.update { it.copy(submitting = false, success = true) }
             } catch (t: Throwable) {
                 _state.update {

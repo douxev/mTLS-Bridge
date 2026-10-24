@@ -14,6 +14,7 @@ import com.douxev.mtls_bridge.ui.edit.EditConfigScreen
 import com.douxev.mtls_bridge.ui.edit.EditConfigViewModel
 import com.douxev.mtls_bridge.ui.help.HelpScreen
 import com.douxev.mtls_bridge.ui.list.ConfigListScreen
+import com.douxev.mtls_bridge.ui.remote.RemoteAdminScreen
 
 private object Routes {
     const val LIST = "list"
@@ -22,6 +23,7 @@ private object Routes {
     const val EDIT = "edit/{configId}"
     const val COMPARE = "compare"
     const val HELP = "help"
+    const val REMOTE = "remote"
     fun detail(configId: String) = "detail/$configId"
     fun edit(configId: String) = "edit/$configId"
 }
@@ -36,6 +38,7 @@ fun MtlsNavigation() {
                 onConfigClick = { id -> nav.navigate(Routes.detail(id)) },
                 onEditClick = { id -> nav.navigate(Routes.edit(id)) },
                 onHelpClick = { nav.navigate(Routes.HELP) },
+                onRemoteClick = { nav.navigate(Routes.REMOTE) },
             )
         }
         composable(Routes.ADD) {
@@ -43,7 +46,11 @@ fun MtlsNavigation() {
                 onBack = { nav.popBackStack() },
                 onSaved = { nav.popBackStack() },
                 onCompareModes = { nav.navigate(Routes.COMPARE) },
+                onRemoteClick = { nav.navigate(Routes.REMOTE) },
             )
+        }
+        composable(Routes.REMOTE) {
+            RemoteAdminScreen(onBack = { nav.popBackStack() })
         }
         composable(Routes.COMPARE) {
             CompareModesScreen(onBack = { nav.popBackStack() })

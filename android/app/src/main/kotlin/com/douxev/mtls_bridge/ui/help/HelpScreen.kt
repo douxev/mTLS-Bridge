@@ -62,6 +62,7 @@ fun HelpScreen(
         ) {
             item { OverviewCard() }
             item { ModeCard(onCompareModes) }
+            item { Android17Card() }
             item { ImportBundleCard() }
             item { AdminBundleCard(onCopy = { copyToClipboard(context, it) }) }
             item { SecurityCard() }
@@ -98,6 +99,25 @@ private fun ModeCard(onCompareModes: () -> Unit) = SectionCard(title = "Loopback
         onClick = onCompareModes,
         label = { Text("Comparer en détail") },
         colors = AssistChipDefaults.assistChipColors(),
+    )
+}
+
+@Composable
+private fun Android17Card() = SectionCard(title = "Android 17 : profils et réseau local") {
+    Text(
+        "Android 17 bloque le loopback (127.0.0.1) entre profils : l'app cible " +
+            "doit être dans le même profil que mTLS Bridge. Une app du profil " +
+            "professionnel ou de l'Espace privé ne peut pas joindre un proxy du " +
+            "profil principal — installe aussi mTLS Bridge dans ce profil et " +
+            "crée la config là-bas.",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    Text(
+        "Si ton serveur est sur le réseau local (192.168.x.x, 10.x.x.x, " +
+            "100.64.x.x…), Android 17 demande l'autorisation « Appareils à " +
+            "proximité » (accès au réseau local) avant de démarrer le proxy. " +
+            "Sans elle, les connexions vers ce serveur échouent.",
+        style = MaterialTheme.typography.bodyMedium,
     )
 }
 

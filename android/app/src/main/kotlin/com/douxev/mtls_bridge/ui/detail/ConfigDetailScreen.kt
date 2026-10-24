@@ -12,7 +12,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -48,7 +50,10 @@ import com.douxev.mtls_bridge.data.ConfigEntity
 import com.douxev.mtls_bridge.data.ProxyMode
 import com.douxev.mtls_bridge.runtime.SafFileUtils
 import com.douxev.mtls_bridge.service.ProxyLauncher
+import com.douxev.mtls_bridge.data.clientUrl
 import com.douxev.mtls_bridge.ui.common.BadgeRow
+import com.douxev.mtls_bridge.ui.common.launchOrExplain
+import com.douxev.mtls_bridge.ui.tv.LocalIsTv
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -82,7 +87,10 @@ fun ConfigDetailScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(padding)
+                    // Champ passphrase de ReimportKeyCard : réserve le clavier.
+                    .consumeWindowInsets(padding)
+                    .imePadding(),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -152,17 +160,9 @@ private fun ConfigSummaryCard(cfg: ConfigEntity) {
 
 @Composable
 private fun ClientUrlRow(cfg: ConfigEntity, onCopy: (String) -> Unit) {
-    val url: String? = when (cfg.mode) {
-        ProxyMode.VPN -> if (!cfg.syntheticIp.isNullOrBlank() && cfg.syntheticPort != null)
-            "http://${cfg.syntheticIp}:${cfg.syntheticPort}"
-        else null
-        ProxyMode.LOOPBACK -> {
-            // Port 0 = éphémère, on ne connaît pas le port avant que le service
-            // bind. La doxev verra le port réel dans les events BIND_OK.
-            val p = cfg.loopbackPort
-            if (p != null && p > 0) "http://127.0.0.1:$p" else null
-        }
-    }
+    // Port 0 = éphémère : le port réel n'est connu qu'au BIND_OK.
+    val url: String? = cfg.clientUrl()
+    val isTv = LocalIsTv.current
     androidx.compose.foundation.layout.Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
@@ -175,11 +175,14 @@ private fun ClientUrlRow(cfg: ConfigEntity, onCopy: (String) -> Unit) {
             )
             Text(
                 url ?: "— port éphémère, voir BIND_OK dans les events",
-                style = MaterialTheme.typography.bodyMedium,
+                // Sur TV, l'URL se recopie à la main dans l'app cible : en grand.
+                style = if (isTv) MaterialTheme.typography.headlineSmall
+                else MaterialTheme.typography.bodyMedium,
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
             )
         }
-        if (url != null) {
+        // Pas de presse-papiers utile sur TV (aucune app où coller).
+        if (url != null && !isTv) {
             IconButton(onClick = { onCopy(url) }) {
                 Icon(Icons.Default.ContentCopy, contentDescription = "Copier l'URL")
             }
@@ -274,7 +277,7 @@ private fun ReimportKeyCard(vm: ConfigDetailViewModel) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
             ) {
-                Button(onClick = { pickP12.launch("*/*") }) { Text("Choisir .p12") }
+                Button(onClick = { pickP12.launchOrExplain(context, "*/*") }) { Text("Choisir .p12") }
                 Text(
                     p12Uri?.lastPathSegment ?: "aucun fichier",
                     style = MaterialTheme.typography.bodySmall,
@@ -305,8 +308,11 @@ private fun ReimportKeyCard(vm: ConfigDetailViewModel) {
                     val uri = p12Uri ?: return@Button
                     busy = true; error = null
                     scope.launch {
-                        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                            ?: run { busy = false; error = "lecture .p12 impossible"; return@launch }
+                        val bytes = runCatching { SafFileUtils.readBytes(context, uri) }.getOrElse {
+                            busy = false
+                            error = "lecture .p12 impossible"
+                            return@launch
+                        }
                         error = vm.reimportKey(bytes, passphrase.toCharArray())
                         busy = false
                         passphrase = ""

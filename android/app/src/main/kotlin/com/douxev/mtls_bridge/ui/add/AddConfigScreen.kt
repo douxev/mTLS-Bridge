@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -15,6 +17,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -38,11 +42,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.douxev.mtls_bridge.data.ProxyMode
+import com.douxev.mtls_bridge.ui.common.launchOrExplain
+import com.douxev.mtls_bridge.ui.common.rememberLocalNetworkGate
+import com.douxev.mtls_bridge.ui.tv.LocalIsTv
+import com.douxev.mtls_bridge.ui.tv.tvFocusHighlight
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,9 +59,12 @@ fun AddConfigScreen(
     onBack: () -> Unit,
     onSaved: () -> Unit,
     onCompareModes: () -> Unit,
+    onRemoteClick: () -> Unit,
     vm: AddConfigViewModel = viewModel(factory = AddConfigViewModel.Factory),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val localNetworkGate = rememberLocalNetworkGate()
 
     LaunchedEffect(state.success) { if (state.success) onSaved() }
 
@@ -79,10 +91,34 @@ fun AddConfigScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                // Edge-to-edge (obligatoire en targetSdk 36) : le clavier ne
+                // redimensionne plus la fenêtre, on réserve sa hauteur ici.
+                .consumeWindowInsets(padding)
+                .imePadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (LocalIsTv.current) {
+                // Sur TV : pas toujours de sélecteur de fichiers, et la saisie
+                // à la télécommande est lente. La console web fait tout ça.
+                Card(
+                    onClick = onRemoteClick,
+                    modifier = Modifier.fillMaxWidth().tvFocusHighlight(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    ),
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Plus simple depuis un ordinateur", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Ouvre la configuration à distance et dépose le .p12 et la CA " +
+                                "depuis un navigateur sur le même réseau.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                }
+            }
             OutlinedTextField(
                 value = state.displayName,
                 onValueChange = { v -> vm.update { copy(displayName = v) } },
@@ -150,12 +186,29 @@ fun AddConfigScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                PathTokenSection(
+                    enabled = state.pathTokenEnabled,
+                    token = state.pathToken,
+                    onToggle = { v -> vm.update { copy(pathTokenEnabled = v) } },
+                    onRegenerate = {
+                        vm.update {
+                            copy(pathToken = com.douxev.mtls_bridge.data.PathTokenGen.generate())
+                        }
+                    },
+                    previewUrl = if (state.pathTokenEnabled)
+                        "http://127.0.0.1:${state.loopbackPort}/${state.pathToken}/"
+                    else "http://127.0.0.1:${state.loopbackPort}/",
+                )
+                ExtraCanonicalHostsField(
+                    value = state.extraCanonicalHosts,
+                    onValueChange = { v -> vm.update { copy(extraCanonicalHosts = v) } },
+                )
             }
 
             FilePickerRow(
                 label = "Certificat client (.p12)",
                 fileName = state.p12Uri?.lastPathSegment,
-                onPick = { pickP12.launch("*/*") },
+                onPick = { pickP12.launchOrExplain(context, "*/*") },
             )
             OutlinedTextField(
                 value = state.p12Passphrase,
@@ -169,7 +222,7 @@ fun AddConfigScreen(
             FilePickerRow(
                 label = "CA upstream pinné (.pem)",
                 fileName = state.caUri?.lastPathSegment,
-                onPick = { pickCa.launch("*/*") },
+                onPick = { pickCa.launchOrExplain(context, "*/*") },
             )
 
             Row(
@@ -200,7 +253,9 @@ fun AddConfigScreen(
             }
 
             Button(
-                onClick = { vm.submit() },
+                // Une config loopback démarre dès sa création : la permission
+                // réseau local (Android 17) doit être demandée avant.
+                onClick = { localNetworkGate.runAfterCheck(listOf(state.upstreamHost)) { vm.submit() } },
                 enabled = !state.submitting,
                 modifier = Modifier.fillMaxWidth(),
             ) {
@@ -280,6 +335,92 @@ private fun ModeSelector(
             Icon(Icons.Default.Info, contentDescription = "Comparer les modes")
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PathTokenSection(
+    enabled: Boolean,
+    token: String,
+    onToggle: (Boolean) -> Unit,
+    onRegenerate: () -> Unit,
+    previewUrl: String,
+) {
+    androidx.compose.material3.Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                androidx.compose.material3.Switch(
+                    checked = enabled,
+                    onCheckedChange = onToggle,
+                )
+                Column(modifier = Modifier.padding(start = 8.dp)) {
+                    Text(
+                        "Token d'isolation dans l'URL",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        "Recommandé : empêche les autres apps du téléphone d'utiliser " +
+                            "votre certificat via le port loopback. Les apps à base de " +
+                            "webview (Jellyfin Android, Nextcloud) fonctionnent : après la " +
+                            "première page ouverte avec le token, un cookie de session " +
+                            "couvre leurs chemins absolus.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (enabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = token,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.TextButton(onClick = onRegenerate) {
+                        Text("Régénérer")
+                    }
+                }
+            }
+            Text(
+                text = previewUrl,
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+/** Partagé avec l'écran d'édition. */
+@Composable
+internal fun ExtraCanonicalHostsField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    enabled: Boolean = true,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text("Hôtes canoniques additionnels (optionnel)") },
+        supportingText = {
+            Text(
+                "Autres noms d'hôte que le serveur écrit dans ses URLs " +
+                    "(ex. overwrite.cli.url de Nextcloud), séparés par des virgules. " +
+                    "Réécrits vers l'URL loopback comme l'hôte upstream.",
+            )
+        },
+        enabled = enabled,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

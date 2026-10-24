@@ -95,6 +95,8 @@ object ConfigBackup {
         put("upstreamHost", c.upstreamHost)
         put("upstreamPort", c.upstreamPort)
         put("sni", c.sni)
+        // Informatif seulement (lu par les anciennes versions) : l'import
+        // génère toujours un alias Keystore local neuf.
         put("keystoreAlias", c.keystoreAlias)
         put("mode", c.mode.name)
         put("syntheticIp", c.syntheticIp)
@@ -103,6 +105,9 @@ object ConfigBackup {
         put("enabled", c.enabled)
         put("certPemFile", "${c.id}-cert.pem")
         put("caPemFile", "${c.id}-ca.pem")
+        // pathToken optionnel : présent si la config a un token loopback.
+        put("pathToken", c.pathToken ?: JSONObject.NULL)
+        put("extraCanonicalHosts", JSONArray(CanonicalHosts.parse(c.extraCanonicalHosts)))
         // p12File optionnel : non émis par l'export app (on n'a pas la clé).
         // Présent uniquement dans les bundles de déploiement IT.
     }
@@ -164,7 +169,9 @@ object ConfigBackup {
             sni = o.optString("sni").takeIf { it.isNotEmpty() && it != "null" },
             caPem = caPem,
             certChainPem = certChainPem,
-            keystoreAlias = o.getString("keystoreAlias"),
+            // Alias du bundle ignoré : ConfigRepository.importZip en génère un
+            // neuf (un bundle ne doit jamais pouvoir viser une clé existante).
+            keystoreAlias = "",
             mode = ProxyMode.valueOf(o.getString("mode")),
             syntheticIp = if (o.isNull("syntheticIp")) null else o.getString("syntheticIp"),
             syntheticPort = if (o.isNull("syntheticPort")) null else o.getInt("syntheticPort"),
@@ -175,7 +182,23 @@ object ConfigBackup {
             // Sans .p12 : needsKeystoreRefresh=true, désactivée.
             enabled = p12Bytes != null,
             needsKeystoreRefresh = p12Bytes == null,
+            pathToken = if (o.has("pathToken") && !o.isNull("pathToken"))
+                o.getString("pathToken").takeIf { it.isNotBlank() }
+            else null,
+            extraCanonicalHosts = parseExtraCanonicalHosts(o),
         )
         return ParsedConfig(entity, p12Bytes)
+    }
+
+    /** Champ optionnel : tableau JSON (format d'export) ou chaîne séparée par des virgules. */
+    private fun parseExtraCanonicalHosts(o: JSONObject): String? {
+        if (!o.has("extraCanonicalHosts") || o.isNull("extraCanonicalHosts")) return null
+        val arr = o.optJSONArray("extraCanonicalHosts")
+        val raw = if (arr != null) {
+            (0 until arr.length()).joinToString(",") { arr.optString(it) }
+        } else {
+            o.optString("extraCanonicalHosts")
+        }
+        return CanonicalHosts.normalize(raw)
     }
 }

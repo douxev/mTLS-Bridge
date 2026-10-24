@@ -1,5 +1,6 @@
 [versions]
-agp = "8.7.3"
+# 8.10 = première version d'AGP qui gère compileSdk 36 (Gradle 8.11.1 suffit).
+agp = "8.10.1"
 kotlin = "2.1.0"
 composeBom = "2024.12.01"
 material3 = "1.4.0-alpha04"
@@ -13,7 +14,10 @@ securityCrypto = "1.1.0-alpha06"
 roomVersion = "2.6.1"
 sqlcipher = "4.6.1"
 ksp = "2.1.0-1.0.29"
-jna = "5.15.0"
+# ≥ 5.16 : les libjnidispatch.so (dont x86_64) sont alignés sur 16 Ko.
+jna = "5.19.1"
+# QR code de la console de configuration à distance (Java pur, pas de lib native).
+zxing = "3.5.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -39,6 +43,7 @@ androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = 
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "roomVersion" }
 sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipher" }
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

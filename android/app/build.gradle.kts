@@ -7,14 +7,15 @@ plugins {
 
 android {
     namespace = "com.douxev.mtls_bridge"
-    compileSdk = 35
+    compileSdk = 36
     // Pin sur le NDK exact de cargo-ndk pour éviter le mismatch strip/objcopy.
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.douxev.mtls_bridge"
         minSdk = 29
-        targetSdk = 35
+        // 36 exigé par Play pour les mises à jour depuis le 31/08/2026.
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
 
@@ -76,6 +77,11 @@ val cargoBuildRust by tasks.registering(Exec::class) {
     group = "rust"
     description = "Build the mtls-bridge-core cdylib pour toutes les ABI Android via cargo-ndk"
 
+    // On repart d'un jniLibs vide : cargo-ndk ne fait qu'ajouter des fichiers,
+    // une lib renommée ou retirée (ex. l'ancienne libmtlswrap_core.so) y
+    // resterait sinon embarquée dans l'APK.
+    doFirst { delete(jniLibsDir) }
+
     workingDir = workspaceDir.asFile
     commandLine(
         "cargo", "ndk",
@@ -114,7 +120,12 @@ val uniffiGenerateBindings by tasks.registering(Exec::class) {
     description = "Génère les bindings Kotlin depuis la cdylib mtls-bridge-core"
     dependsOn(cargoBuildRustHost)
 
-    doFirst { uniffiKotlinOutDir.get().asFile.mkdirs() }
+    // Repart d'un dossier vide : des bindings d'une ancienne lib (ex.
+    // com/douxev/mtlswrap/) seraient sinon toujours compilés dans l'APK.
+    doFirst {
+        delete(uniffiKotlinOutDir)
+        uniffiKotlinOutDir.get().asFile.mkdirs()
+    }
 
     workingDir = workspaceDir.asFile
     commandLine(
@@ -131,6 +142,12 @@ val uniffiGenerateBindings by tasks.registering(Exec::class) {
     inputs.file(workspaceDir.file("target/debug/libmtls_bridge_core.so"))
     inputs.file(coreDir.file("uniffi.toml"))
     outputs.dir(uniffiKotlinOutDir)
+}
+
+// Schéma Room exporté (versionné avec le code) : base des migrations futures
+// et des tests MigrationTestHelper.
+ksp {
+    arg("room.schemaLocation", layout.projectDirectory.dir("schemas").asFile.absolutePath)
 }
 
 tasks.named("preBuild") {
@@ -169,4 +186,7 @@ dependencies {
 
     // Runtime UniFFI : JNA porte les bindings Kotlin générés.
     implementation(libs.jna) { artifact { type = "aar" } }
+
+    // QR code de l'écran « Configuration à distance ».
+    implementation(libs.zxing.core)
 }

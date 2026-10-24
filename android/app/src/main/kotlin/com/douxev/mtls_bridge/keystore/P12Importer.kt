@@ -8,6 +8,7 @@ import java.io.ByteArrayInputStream
 import java.security.KeyFactory
 import java.security.KeyStore
 import java.security.PrivateKey
+import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 
 data class P12ImportResult(
@@ -42,23 +43,40 @@ data class P12ImportResult(
  */
 class P12Importer {
 
+    /**
+     * @param expectedLeafCertPem si fourni, le cert feuille du .p12 doit être
+     *   identique (DER) au premier cert de ce PEM ; sinon on lève une erreur
+     *   **avant** toute écriture dans le Keystore.
+     */
     fun import(
         p12Bytes: ByteArray,
         passphrase: CharArray,
         keystoreAlias: String,
+        expectedLeafCertPem: ByteArray? = null,
     ): P12ImportResult {
         // 1. Parser le .p12 en mémoire.
         val p12 = KeyStore.getInstance("PKCS12")
         p12.load(ByteArrayInputStream(p12Bytes), passphrase)
 
-        val alias = p12.aliases().toList().firstOrNull()
-            ?: error("aucun alias dans le .p12")
+        // Un .p12 peut contenir des entrées « certificat de confiance » (CA)
+        // avant l'entrée clé : on prend la première qui porte une clé privée.
+        val alias = p12.aliases().toList().firstOrNull { p12.isKeyEntry(it) }
+            ?: error("aucune clé privée dans le .p12")
         val privateKey = p12.getKey(alias, passphrase) as? PrivateKey
             ?: error("alias .p12 sans clé privée")
         val chain: Array<X509Certificate> = (p12.getCertificateChain(alias) ?: emptyArray())
             .map { it as X509Certificate }
             .toTypedArray()
         check(chain.isNotEmpty()) { "chaîne de certs vide dans le .p12" }
+        if (expectedLeafCertPem != null) {
+            val expected = CertificateFactory.getInstance("X.509")
+                .generateCertificates(ByteArrayInputStream(expectedLeafCertPem))
+                .firstOrNull()
+                ?: error("cert attendu illisible")
+            check(expected.encoded.contentEquals(chain[0].encoded)) {
+                "le .p12 ne contient pas le même cert que celui de la config"
+            }
+        }
 
         // 2. Préparer la KeyProtection — on demande le hardware quand dispo
         //    et on autorise les schémas de signature TLS courants.
