@@ -39,6 +39,7 @@ keystore.properties
 backend-ca.*
 mtlswrap-bundle*.zip
 mtlswrap-backup*.zip
+mtls-bridge-bundle*.zip
 bundles/
 
 # Secrets / env

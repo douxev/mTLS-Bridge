@@ -76,12 +76,13 @@ se connecte à aucun serveur que tu n'as pas configuré. Permission INTERNET
 nécessaire pour joindre ton backend, NETWORK_STATE pour la résolution UID,
 FOREGROUND_SERVICE pour maintenir les proxies en arrière-plan.
 
-### Open source
+### Doc et outillage ouverts
 
-mTLS Bridge est open source. Le cœur Rust (TLS, proxy, callbacks Keystore)
-est auditable. Le format de bundle de déploiement est documenté pour
-qu'un admin IT puisse générer des bundles sans même installer l'app sur
-son serveur de build.
+L'app elle-même est propriétaire, mais le **format de bundle de
+déploiement est documenté et ouvert** pour qu'un admin IT puisse
+générer des bundles depuis un simple script bash + openssl, sans
+même installer l'app sur son serveur de build. Voir le repo public
+de documentation pour la spec du format et un script de référence.
 
 ## Catégories
 

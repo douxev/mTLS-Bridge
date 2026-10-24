@@ -73,11 +73,13 @@ doesn't connect to any server you didn't configure. It needs INTERNET
 permission to reach your backend, NETWORK_STATE for connection-owner
 lookup, and FOREGROUND_SERVICE to maintain the proxies in background.
 
-### Open source
+### Open documentation and tooling
 
-mTLS Bridge is open source. The Rust core (TLS, proxying, key callbacks) is
-auditable. The deployment-bundle format is documented for IT admins to
-generate bundles without ever installing the app on their build server.
+While the app itself is proprietary, the **deployment-bundle format is
+documented and open** so IT admins can generate bundles from a simple
+bash + openssl script, without ever installing the app on their build
+server. See the public documentation repository for the format spec
+and a reference script.
 
 ## Categories
 

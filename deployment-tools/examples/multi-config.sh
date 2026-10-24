@@ -10,7 +10,16 @@ set -euo pipefail
 : "${BACKEND_CA_KEY:?set BACKEND_CA_KEY to your backend CA private key path}"
 
 USER_NAME="${1:-alice}"
+# Utilisé tel quel dans les id, noms de fichiers et le JSON : slug uniquement.
+[[ $USER_NAME =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+  || { echo "error: user name must match [A-Za-z0-9][A-Za-z0-9._-]*" >&2; exit 1; }
 P12_PASSPHRASE="$(openssl rand -base64 24)"
+# Ports loopback fixes, tirés dans 10001..32767 comme l'app (qui en tire un
+# autre à l'import si le port est déjà pris sur le téléphone).
+random_port() { echo $(( 10001 + ((RANDOM << 15) | RANDOM) % 22767 )); }
+JELLYFIN_PORT="$(random_port)"
+NEXTCLOUD_PORT="$(random_port)"
+while (( NEXTCLOUD_PORT == JELLYFIN_PORT )); do NEXTCLOUD_PORT="$(random_port)"; done
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -26,11 +35,12 @@ emit_artifacts() {
     -days 365 \
     -out "$WORK/${cfg_id}-cert.pem" 2>/dev/null
   cp "$BACKEND_CA_CRT" "$WORK/${cfg_id}-ca.pem"
-  openssl pkcs12 -export \
+  # Passphrase par l'environnement (env:), jamais en argument visible dans ps.
+  P12_PASSPHRASE="$P12_PASSPHRASE" openssl pkcs12 -export \
     -in "$WORK/${cfg_id}-cert.pem" \
     -inkey "$WORK/${cfg_id}.key" \
     -out "$WORK/${cfg_id}.p12" \
-    -passout "pass:${P12_PASSPHRASE}"
+    -passout env:P12_PASSPHRASE
   rm -f "$WORK/${cfg_id}.key" "$WORK/${cfg_id}.csr"
 }
 
@@ -53,7 +63,7 @@ cat > "$WORK/configs.json" <<EOF
       "mode": "LOOPBACK",
       "syntheticIp": null,
       "syntheticPort": null,
-      "loopbackPort": 0,
+      "loopbackPort": ${JELLYFIN_PORT},
       "enabled": true,
       "certPemFile": "jellyfin-${USER_NAME}-cert.pem",
       "caPemFile": "jellyfin-${USER_NAME}-ca.pem",
@@ -70,7 +80,7 @@ cat > "$WORK/configs.json" <<EOF
       "mode": "LOOPBACK",
       "syntheticIp": null,
       "syntheticPort": null,
-      "loopbackPort": 0,
+      "loopbackPort": ${NEXTCLOUD_PORT},
       "enabled": true,
       "certPemFile": "nextcloud-${USER_NAME}-cert.pem",
       "caPemFile": "nextcloud-${USER_NAME}-ca.pem",
@@ -86,3 +96,5 @@ mv "$WORK/$OUT" "./$OUT"
 
 echo "  ✓ bundle:     ./${OUT}"
 echo "  ✓ passphrase: ${P12_PASSPHRASE}"
+echo "  ✓ Jellyfin :  http://127.0.0.1:${JELLYFIN_PORT}/"
+echo "  ✓ Nextcloud : http://127.0.0.1:${NEXTCLOUD_PORT}/"
