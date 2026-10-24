@@ -22,12 +22,12 @@ use futures::{Sink, SinkExt, Stream, StreamExt};
 use netstack_smoltcp::{AnyIpPktFrame, StackBuilder};
 use tokio::io::unix::AsyncFd;
 use tokio::sync::watch;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 
 use crate::config::ProxyConfig;
 use crate::error::{CoreError, Result};
 use crate::loopback::{AuditLogger, PeerUidResolver, ProxyEvent};
-use crate::proxy::{bridge_to_mtls_upstream, precompile_client_config};
+use crate::proxy::{bridge_to_mtls_upstream, precompile_client_config, stop_requested};
 
 /// Une route VPN : une adresse synthétique → la config mTLS associée.
 #[derive(Clone)]
@@ -107,6 +107,9 @@ impl TunFd {
     /// par `VpnService.Builder.establish()` ne l'est pas par défaut, donc
     /// on force `O_NONBLOCK` ici.
     pub fn from_raw_fd(raw: RawFd, mtu: usize) -> Result<Self> {
+        if raw < 0 {
+            return Err(CoreError::Config(format!("tun_fd invalide ({raw})")));
+        }
         // SAFETY : l'appelant garantit l'unique propriété du fd (typiquement
         // après ParcelFileDescriptor.detachFd() côté Kotlin).
         let owned = unsafe { OwnedFd::from_raw_fd(raw) };
@@ -256,6 +259,8 @@ pub struct VpnHandle {
 
 #[uniffi::export]
 impl VpnHandle {
+    /// Demande l'arrêt : le pont tun ↔ netstack s'interrompt (le tun_fd est
+    /// fermé) et toutes les sessions en cours sont fermées.
     pub fn stop(&self) {
         let _ = self.stop_tx.send(true);
     }
@@ -280,9 +285,11 @@ pub async fn start_vpn(
     audit: Arc<dyn AuditLogger>,
 ) -> Result<Arc<VpnHandle>> {
     crate::init_crypto_provider();
-    let routing = Arc::new(RoutingTable::from_routes(routes)?);
-
+    // Adopter le fd AVANT toute étape faillible : resté brut, personne ne le
+    // fermerait si une route est invalide ou si netstack échoue, et
+    // l'interface VPN resterait montée.
     let tun = TunFd::from_raw_fd(tun_fd as RawFd, mtu as usize)?;
+    let routing = Arc::new(RoutingTable::from_routes(routes)?);
 
     let (stack, tcp_runner, _udp, tcp_listener) = StackBuilder::default()
         .stack_buffer_size(512)
@@ -301,10 +308,14 @@ pub async fn start_vpn(
 
     // 1) Tâche runner du netstack (poll smoltcp interface).
     if let Some(runner) = tcp_runner {
+        let mut stop_for_runner = stop_rx.clone();
         tasks.push(tokio::spawn(async move {
-            match runner.await {
-                Ok(()) => log::warn!("netstack tcp_runner s'est terminé proprement"),
-                Err(e) => log::error!("netstack tcp_runner a échoué: {e}"),
+            tokio::select! {
+                () = stop_requested(&mut stop_for_runner) => {}
+                res = runner => match res {
+                    Ok(()) => log::warn!("netstack tcp_runner s'est terminé proprement"),
+                    Err(e) => log::error!("netstack tcp_runner a échoué: {e}"),
+                },
             }
         }));
     } else {
@@ -396,12 +407,14 @@ pub async fn start_vpn(
     let uid_resolver_for_accept = Arc::clone(&uid_resolver);
     tasks.push(tokio::spawn(async move {
         let mut listener = tcp_listener;
+        // Sessions en cours : abortées ensemble à l'arrêt.
+        let mut sessions = JoinSet::new();
         loop {
             tokio::select! {
                 biased;
-                _ = stop_for_accept.changed() => {
-                    if *stop_for_accept.borrow() { break; }
-                }
+                () = stop_requested(&mut stop_for_accept) => break,
+                // Récolte des sessions terminées, sinon le JoinSet grossit.
+                Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
                 next = listener.next() => {
                     // ATTENTION sémantique netstack-smoltcp inversée :
                     // - local_addr  = src_addr (= l'app cliente, IP du tun + port éphémère)
@@ -430,12 +443,14 @@ pub async fn start_vpn(
                     // sockets VPN-routés (= renvoie None), on **soft-fail** :
                     // on log un avertissement et on accepte, parce que la
                     // garantie addAllowedApplication reste tenue par l'OS.
-                    let uid_opt = uid_resolver_for_accept.peer_uid(
-                        src_addr.ip().to_string(),
-                        src_addr.port(),
-                        dst_addr.ip().to_string(),
-                        dst_addr.port(),
-                    );
+                    let uid_opt = crate::runtime::blocking(|| {
+                        uid_resolver_for_accept.peer_uid(
+                            src_addr.ip().to_string(),
+                            src_addr.port(),
+                            dst_addr.ip().to_string(),
+                            dst_addr.port(),
+                        )
+                    });
                     match uid_opt {
                         Some(uid) if uid != expected_uid => {
                             audit_for_accept.record(ProxyEvent::RejectedUidMismatch {
@@ -463,8 +478,11 @@ pub async fn start_vpn(
                     });
                     let cfg_inner = Arc::clone(&cfg);
                     let audit_inner = Arc::clone(&audit_for_accept);
-                    tokio::spawn(async move {
-                        if let Err(e) = bridge_to_mtls_upstream(stream, cc, &cfg_inner).await {
+                    sessions.spawn(async move {
+                        // Mode VPN : pas de réécriture de réponse — la cible voit
+                        // déjà directement l'IP synthétique, pas d'URL loopback
+                        // canonique vers laquelle réécrire les URLs upstream.
+                        if let Err(e) = bridge_to_mtls_upstream(stream, cc, &cfg_inner, None).await {
                             audit_inner.record(ProxyEvent::BridgeFailed {
                                 config_id: cfg_inner.id.clone(),
                                 reason: e.to_string(),
@@ -474,6 +492,7 @@ pub async fn start_vpn(
                 }
             }
         }
+        sessions.shutdown().await;
     }));
 
     audit.record(ProxyEvent::VpnStarted {

@@ -170,6 +170,8 @@ async fn bridge_streams_plaintext_to_mtls_upstream() -> Result<()> {
             key: PrivateKeyMaterial::InMemoryPem(Arc::new(pki.client_key_pem.clone())),
         },
         server_trust: ServerTrust::Pinned(Arc::new(pki.ca_pem.clone())),
+        path_token: None,
+        extra_canonical_hosts: Vec::new(),
     };
     let client_config = precompile_client_config(&cfg)?;
 
@@ -182,7 +184,7 @@ async fn bridge_streams_plaintext_to_mtls_upstream() -> Result<()> {
     let cc_clone = client_config.clone();
     let proxy_task = tokio::spawn(async move {
         let (inbound, _) = listener.accept().await?;
-        bridge_to_mtls_upstream(inbound, cc_clone, &cfg_clone).await
+        bridge_to_mtls_upstream(inbound, cc_clone, &cfg_clone, None).await
     });
 
     let mut client = TcpStream::connect(("127.0.0.1", proxy_port)).await?;

@@ -3,16 +3,14 @@
 //! matchent, et qu'un doublon (même IP+port pour deux configs) est rejeté.
 //!
 //! Pas de test end-to-end avec un vrai tun_fd : ça demanderait CAP_NET_ADMIN
-//! + privilèges root sur la machine de build, hors scope CI. Le pipeline
+//! et des privilèges root sur la machine de build, hors scope CI. Le pipeline
 //! complet sera validé sur device via les tests instrumentés Android.
 
 #![cfg(any(target_os = "linux", target_os = "android"))]
 
 use std::sync::Arc;
 
-use mtls_bridge_core::config::{
-    ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust,
-};
+use mtls_bridge_core::config::{ClientIdentity, PrivateKeyMaterial, ProxyConfig, ServerTrust};
 use mtls_bridge_core::vpn::VpnRoute;
 
 fn dummy_cfg(id: &str) -> Arc<ProxyConfig> {
@@ -28,6 +26,8 @@ fn dummy_cfg(id: &str) -> Arc<ProxyConfig> {
             key: PrivateKeyMaterial::InMemoryPem(Arc::new(Vec::new())),
         },
         server_trust: ServerTrust::Pinned(Arc::new(Vec::new())),
+        path_token: None,
+        extra_canonical_hosts: Vec::new(),
     })
 }
 

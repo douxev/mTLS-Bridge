@@ -152,6 +152,8 @@ fn make_cfg(pki: &Pki, upstream_port: u16) -> Arc<ProxyConfig> {
             key: PrivateKeyMaterial::InMemoryPem(Arc::new(pki.client_key_pem.clone())),
         },
         server_trust: ServerTrust::Pinned(Arc::new(pki.ca_pem.clone())),
+        path_token: None,
+        extra_canonical_hosts: Vec::new(),
     })
 }
 
@@ -255,7 +257,11 @@ async fn wrong_uid_is_rejected_silently() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn unknown_uid_is_fail_closed() -> Result<()> {
+async fn unknown_uid_is_soft_accepted() -> Result<()> {
+    // Android limite getConnectionOwnerUid : sur la plupart des devices il
+    // renvoie INVALID_UID pour les sockets que l'app ne possède pas. Un
+    // fail-closed strict rendait le loopback inutilisable. On accepte donc,
+    // en marquant peer_uid=0 dans l'audit pour signaler le cas.
     init_crypto_provider();
     let pki = build_pki();
     let upstream = spawn_mtls_echo_server(&pki).await;
@@ -271,12 +277,16 @@ async fn unknown_uid_is_fail_closed() -> Result<()> {
     )
     .await?;
     let port = h.port();
-    assert!(try_connect_then_eof(port).await);
+    let body = connect_and_read(port).await;
     h.stop();
 
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("HTTP/1.1 200 OK"), "réponse: {body}");
+
     let events = audit.0.lock().unwrap().clone();
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, ProxyEvent::RejectedUidUnknown { .. })));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        ProxyEvent::Accepted { peer_uid: 0, .. }
+    )), "attendu Accepted{{peer_uid=0}} (soft-fail UID inconnu), events={events:?}");
     Ok(())
 }

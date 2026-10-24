@@ -147,9 +147,13 @@ impl Signer for CallbackSigner {
         let our_scheme = scheme_from_rustls(self.scheme).ok_or_else(|| {
             rustls::Error::General(format!("scheme {:?} non mappable", self.scheme))
         })?;
-        self.callback
-            .sign(self.handle.clone(), our_scheme, message.to_vec())
-            .map_err(|e| rustls::Error::General(format!("keystore: {e}")))
+        // Appel Kotlin bloquant (TEE/StrongBox) au milieu du handshake : le
+        // worker est libéré pour les autres sessions pendant ce temps.
+        crate::runtime::blocking(|| {
+            self.callback
+                .sign(self.handle.clone(), our_scheme, message.to_vec())
+        })
+        .map_err(|e| rustls::Error::General(format!("keystore: {e}")))
     }
 
     fn scheme(&self) -> SignatureScheme {

@@ -21,6 +21,20 @@ pub struct ProxyConfig {
     pub identity: ClientIdentity,
     /// CA distante à épingler. `None` = trust store système (déconseillé en prod).
     pub server_trust: ServerTrust,
+    /// Optionnel : token secret dans le premier segment du path HTTP. Si
+    /// présent, le bridge n'accepte que les requêtes dont l'URL commence par
+    /// `/<token>/` (ou `/<token>` pour la racine) ou qui portent le cookie
+    /// de session posé en réponse à une telle requête (cf.
+    /// [`crate::http_rewrite::PathAuth`]), strippe ce préfixe avant forward
+    /// upstream, et close fail-closed sinon. Remplace l'isolation par UID
+    /// qui n'est pas accessible aux apps non-VPN sur Android.
+    pub path_token: Option<String>,
+    /// Hosts canoniques additionnels à réécrire vers le loopback en mode
+    /// rewrite. Indispensable quand l'application backend émet des URLs
+    /// absolues avec un host différent de l'upstream physique (ex. Nextcloud
+    /// avec `overwrite.cli.url` qui diffère du hostname utilisé par le
+    /// reverse-proxy mTLS).
+    pub extra_canonical_hosts: Vec<String>,
 }
 
 #[derive(Clone)]

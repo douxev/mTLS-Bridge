@@ -15,10 +15,12 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 uniffi = { version = "0.31", features = ["cli", "tokio"] }
 
-# Runtime async mono-thread : un seul cœur suffit pour piloter du forwarding,
-# minimise les wake-ups et donc la conso batterie sur ARM.
+# Runtime multi-thread à 2 workers pour les proxys (cf. src/runtime.rs) : les
+# callbacks Kotlin synchrones (signature Keystore) ne doivent pas bloquer
+# toutes les connexions. Deux workers suffisent pour piloter du forwarding.
 tokio = { version = "1.43", default-features = false, features = [
     "rt",
+    "rt-multi-thread",
     "macros",
     "net",
     "io-util",

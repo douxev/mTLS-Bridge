@@ -22,6 +22,11 @@ pub struct ProxyConfigSpec {
     pub cert_chain_pem: Vec<u8>,
     pub ca_pem: Vec<u8>,
     pub keystore_alias: String,
+    /// Loopback uniquement. Token URL-safe inséré dans le path HTTP.
+    pub path_token: Option<String>,
+    /// Hosts canoniques additionnels (sans scheme) à réécrire vers le
+    /// loopback. Voir [`ProxyConfig::extra_canonical_hosts`].
+    pub extra_canonical_hosts: Vec<String>,
 }
 
 fn build_proxy_config(spec: ProxyConfigSpec, signer: Arc<dyn KeystoreSigner>) -> Arc<ProxyConfig> {
@@ -38,6 +43,8 @@ fn build_proxy_config(spec: ProxyConfigSpec, signer: Arc<dyn KeystoreSigner>) ->
             },
         },
         server_trust: ServerTrust::Pinned(Arc::new(spec.ca_pem)),
+        path_token: spec.path_token,
+        extra_canonical_hosts: spec.extra_canonical_hosts,
     })
 }
 
@@ -51,7 +58,9 @@ pub async fn start_loopback_proxy(
     audit: Arc<dyn AuditLogger>,
 ) -> Result<Arc<LoopbackHandle>> {
     let cfg = build_proxy_config(config, signer);
-    start_loopback(cfg, bind_port, expected_uid, uid_resolver, audit).await
+    // Sur le runtime multi-thread des proxys, pas sur celui d'async-compat
+    // (mono-thread) : cf. crate::runtime.
+    crate::runtime::run(start_loopback(cfg, bind_port, expected_uid, uid_resolver, audit)).await?
 }
 
 // ----- VPN -----
@@ -93,5 +102,6 @@ pub async fn start_vpn_proxy(
             })
         })
         .collect::<Result<Vec<_>>>()?;
-    crate::vpn::start_vpn(tun_fd, mtu, parsed_routes, uid_resolver, audit).await
+    crate::runtime::run(crate::vpn::start_vpn(tun_fd, mtu, parsed_routes, uid_resolver, audit))
+        .await?
 }

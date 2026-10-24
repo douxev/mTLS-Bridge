@@ -41,7 +41,8 @@ pub fn build_client_config(cfg: &ProxyConfig) -> Result<Arc<ClientConfig>> {
         }
         PrivateKeyMaterial::Keystore { handle, signer } => {
             let chain = parse_cert_chain(&cfg.identity.cert_chain_pem)?;
-            let supported_our = signer.supported_schemes(handle.clone());
+            let supported_our =
+                crate::runtime::blocking(|| signer.supported_schemes(handle.clone()));
             if supported_our.is_empty() {
                 return Err(CoreError::Config(
                     "le KeystoreSigner ne déclare aucun schéma supporté".into(),
