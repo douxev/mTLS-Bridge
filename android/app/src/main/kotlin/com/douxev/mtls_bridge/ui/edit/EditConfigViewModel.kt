@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.douxev.mtls_bridge.MtlsApplication
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.data.ConfigRepository
 import com.douxev.mtls_bridge.data.ProxyMode
 import com.douxev.mtls_bridge.data.SyntheticEndpoints
@@ -21,11 +22,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * Édition d'une config existante : on ne touche PAS au certificat ni à la
- * clé Keystore (qui sont liés à l'alias = configId). Pour faire tourner les
- * certs, supprime + recrée. Ici on n'autorise que la modif des métadonnées :
- * nom, app cible, hôte/port upstream, SNI, mode, IP/port synthétique ou
- * port loopback, token et hôtes canoniques.
+ * Editing an existing config: the certificate and the Keystore key (both
+ * bound to the alias = configId) are NOT touched. To rotate certificates,
+ * delete and recreate. Only metadata can be changed here: name, target app,
+ * upstream host/port, SNI, mode, synthetic IP/port or loopback port, token
+ * and canonical hosts.
  */
 data class EditConfigUiState(
     val displayName: String = "",
@@ -60,11 +61,11 @@ class EditConfigViewModel(
         viewModelScope.launch {
             val cfg = repo.byId(configId)
             if (cfg == null) {
-                _state.update { it.copy(loaded = true, error = "config introuvable") }
+                _state.update { it.copy(loaded = true, error = app.getString(R.string.edit_error_not_found)) }
                 return@launch
             }
-            // Config loopback qui passerait en VPN : on propose d'emblée un
-            // couple IP/port libre plutôt qu'un 192.0.2.1:5001 en conflit.
+            // Loopback config switching to VPN: offer a free IP/port pair
+            // right away rather than a conflicting 192.0.2.1:5001.
             val (freeIp, freePort) = if (cfg.syntheticIp.isNullOrBlank() || cfg.syntheticPort == null) {
                 repo.allocateSyntheticEndpoint(excludeId = configId)
             } else {
@@ -112,7 +113,7 @@ class EditConfigViewModel(
                     displayName = s.displayName.trim(),
                     targetPackage = s.targetPackage,
                     upstreamHost = s.upstreamHost.trim(),
-                    upstreamPort = s.upstreamPort.toIntOrNull() ?: error("port invalide"),
+                    upstreamPort = s.upstreamPort.toIntOrNull() ?: error(app.getString(R.string.edit_error_invalid_port)),
                     sni = s.sni.trim().takeIf { it.isNotEmpty() },
                     mode = s.mode,
                     syntheticIp = s.syntheticIp.takeIf { s.mode == ProxyMode.VPN },
@@ -125,9 +126,9 @@ class EditConfigViewModel(
                     },
                     extraCanonicalHosts = s.extraCanonicalHosts.takeIf { s.mode == ProxyMode.LOOPBACK },
                 )
-                // Pas de restart ici : le runtime Rust copie les champs au
-                // démarrage, et LoopbackCoordinator redémarre le proxy dès que
-                // l'empreinte de la config change en base (si elle est enabled).
+                // No restart here: the Rust runtime copies the fields at
+                // startup, and LoopbackCoordinator restarts the proxy as soon as
+                // the config fingerprint changes in the database (if enabled).
                 _state.update { it.copy(submitting = false, success = true) }
             } catch (t: Throwable) {
                 _state.update {
@@ -145,7 +146,7 @@ class EditConfigViewModel(
                 val app = this[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]
                         as MtlsApplication
                 val saved: SavedStateHandle = createSavedStateHandle()
-                val id = saved.get<String>(CONFIG_ID_KEY) ?: error("$CONFIG_ID_KEY manquant")
+                val id = saved.get<String>(CONFIG_ID_KEY) ?: error("$CONFIG_ID_KEY missing")
                 EditConfigViewModel(id, app, app.configRepo)
             }
         }

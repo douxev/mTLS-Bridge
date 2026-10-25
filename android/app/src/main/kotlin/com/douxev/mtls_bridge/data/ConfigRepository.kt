@@ -15,26 +15,26 @@ data class NewConfigRequest(
     val sni: String?,
     val caPem: ByteArray,
     val mode: ProxyMode,
-    /** VPN uniquement. Adresse synthétique TEST-NET (192.0.2.X) attribuée par l'UI. */
+    /** VPN only. Synthetic TEST-NET address (192.0.2.X) assigned by the UI. */
     val syntheticIp: String? = null,
     val syntheticPort: Int? = null,
-    /** Loopback uniquement. 0 = port éphémère, choisi à start_loopback. */
+    /** Loopback only. 0 = ephemeral port, chosen at start_loopback. */
     val loopbackPort: Int? = null,
     /**
-     * Loopback uniquement. Token URL-safe à insérer dans le path HTTP pour
-     * isoler la config des autres apps. `null` = pas de check.
+     * Loopback only. URL-safe token inserted into the HTTP path to isolate
+     * the config from other apps. `null` = no check.
      */
     val pathToken: String? = null,
-    /** Loopback uniquement. Saisie libre, normalisée par [CanonicalHosts]. */
+    /** Loopback only. Free-form input, normalized by [CanonicalHosts]. */
     val extraCanonicalHosts: String? = null,
-    /** .p12 du user + passphrase saisie dans l'UI. */
+    /** The user's .p12 + passphrase entered in the UI. */
     val p12Bytes: ByteArray,
     val p12Passphrase: CharArray,
 )
 
 /**
- * Plage d'IP synthétiques du mode VPN : TEST-NET-1 (RFC 5737). `.254` est
- * l'adresse du tun lui-même, `.0` et `.255` réseau/broadcast.
+ * Synthetic IP range for VPN mode: TEST-NET-1 (RFC 5737). `.254` is the
+ * address of the tun itself, `.0` and `.255` are network/broadcast.
  */
 object SyntheticEndpoints {
     const val TUN_NET = "192.0.2.0"
@@ -51,8 +51,8 @@ object SyntheticEndpoints {
     }
 
     /**
-     * Premier couple libre : une IP distincte par config tant qu'il en reste
-     * (URL lisible), puis d'autres ports sur les IP déjà prises.
+     * First free pair: a distinct IP per config while any remain (readable
+     * URL), then other ports on the IPs already taken.
      */
     fun allocate(taken: Collection<Pair<String, Int>>): Pair<String, Int> {
         val usedIps = taken.map { it.first }.toSet()
@@ -62,25 +62,25 @@ object SyntheticEndpoints {
         for (port in DEFAULT_PORT + 1..65535) {
             HOSTS.map { "$PREFIX$it" to port }.firstOrNull { it !in used }?.let { return it }
         }
-        error("plus aucune IP/port synthétique libre")
+        error("no free synthetic IP/port left")
     }
 }
 
 /**
- * Ports fixes du mode loopback. Tirés dans 10001..32767 comme à la création
- * d'une config : au-dessus des ports « registered » courants, sous la plage
- * éphémère Linux (32768+).
+ * Fixed ports for loopback mode. Drawn from 10001..32767 as when creating a
+ * config: above the common "registered" ports, below the Linux ephemeral
+ * range (32768+).
  */
 object LoopbackPorts {
     private val RANDOM_RANGE = 10001..32767
 
-    /** Port tiré au hasard dans la plage, hors de [taken]. */
+    /** Random port from the range, outside [taken]. */
     fun allocate(taken: Set<Int>): Int {
         repeat(64) {
             val port = RANDOM_RANGE.random()
             if (port !in taken) return port
         }
-        return RANDOM_RANGE.firstOrNull { it !in taken } ?: error("plus aucun port loopback libre")
+        return RANDOM_RANGE.firstOrNull { it !in taken } ?: error("no free loopback port left")
     }
 }
 
@@ -94,38 +94,39 @@ class ConfigRepository(
     suspend fun byId(id: String): ConfigEntity? = dao.byId(id)
 
     /**
-     * Crée une config : import .p12 → Keystore, puis persiste les métadonnées
-     * en DB. Si l'écriture DB échoue après l'import, on rollback le Keystore.
-     * Main-safe : parsing PKCS#12 et opérations Keystore sur Dispatchers.IO.
+     * Creates a config: imports the .p12 into the Keystore, then persists the
+     * metadata in the DB. If the DB write fails after the import, the Keystore
+     * entry is rolled back. Main-safe: PKCS#12 parsing and Keystore operations
+     * run on Dispatchers.IO.
      */
     suspend fun create(req: NewConfigRequest): ConfigEntity = withContext(Dispatchers.IO) {
         try {
             insertNew(req)
         } finally {
-            // Effacer la passphrase de la RAM dès qu'on n'en a plus besoin.
+            // Wipe the passphrase from RAM as soon as it is no longer needed.
             req.p12Passphrase.fill('\u0000')
         }
     }
 
     private suspend fun insertNew(req: NewConfigRequest): ConfigEntity {
-        require(req.displayName.isNotBlank()) { "nom obligatoire" }
+        require(req.displayName.isNotBlank()) { "name is required" }
         require(req.targetPackage.isNotBlank()) {
-            "app cible obligatoire — sélectionne-la dans le dropdown"
+            "target app is required: select it from the dropdown"
         }
         val sanitizedHost = sanitizeHost(req.upstreamHost)
-        require(sanitizedHost.isNotBlank()) { "hôte obligatoire" }
-        require(req.upstreamPort in 1..65535) { "port hors plage" }
-        require(req.caPem.isNotEmpty()) { "CA pinning obligatoire (MVP)" }
-        // Refuse explicite d'une seconde config pour la même app : message
-        // d'erreur lisible plutôt qu'un SQLiteConstraintException brut.
+        require(sanitizedHost.isNotBlank()) { "host is required" }
+        require(req.upstreamPort in 1..65535) { "port out of range" }
+        require(req.caPem.isNotEmpty()) { "CA pinning is required (MVP)" }
+        // Explicitly reject a second config for the same app: a readable error
+        // message rather than a raw SQLiteConstraintException.
         if (dao.findByTargetPackage(req.targetPackage) != null) {
-            error("une config existe déjà pour ${req.targetPackage} — édite-la ou supprime-la d'abord")
+            error("a config already exists for ${req.targetPackage}: edit or delete it first")
         }
         when (req.mode) {
             ProxyMode.VPN -> requireFreeSyntheticEndpoint(null, req.syntheticIp, req.syntheticPort)
             ProxyMode.LOOPBACK -> {
                 require(req.loopbackPort != null && req.loopbackPort in 0..65535) {
-                    "port loopback invalide"
+                    "invalid loopback port"
                 }
             }
         }
@@ -151,7 +152,7 @@ class ConfigRepository(
             loopbackPort = req.loopbackPort,
             securityLevel = imported.securityLevel,
             createdAtEpochMs = System.currentTimeMillis(),
-            // Loopback uniquement : token persiste tel quel. VPN : null.
+            // Loopback only: the token is persisted as is. VPN: null.
             pathToken = req.pathToken?.takeIf { req.mode == ProxyMode.LOOPBACK },
             extraCanonicalHosts = CanonicalHosts.normalize(req.extraCanonicalHosts)
                 ?.takeIf { req.mode == ProxyMode.LOOPBACK },
@@ -159,8 +160,8 @@ class ConfigRepository(
         try {
             dao.insert(entity)
         } catch (t: Throwable) {
-            // Rollback Keystore : la clé importée doit disparaître si on n'a
-            // pas pu persister la métadonnée DB associée.
+            // Keystore rollback: the imported key must go away if the matching
+            // DB metadata could not be persisted.
             deleteKeystoreEntry(keystoreAlias)
             throw t
         }
@@ -168,9 +169,9 @@ class ConfigRepository(
     }
 
     /**
-     * Met à jour les champs modifiables d'une config sans toucher au keystore.
-     * Pour rotation du cert : supprimer + recréer (le cert est lié à l'alias
-     * Keystore, on évite la complexité d'un re-import live).
+     * Updates the editable fields of a config without touching the keystore.
+     * To rotate the cert: delete + recreate (the cert is tied to the Keystore
+     * alias; this avoids the complexity of a live re-import).
      */
     suspend fun updateMetadata(
         id: String,
@@ -186,25 +187,25 @@ class ConfigRepository(
         pathToken: String?,
         extraCanonicalHosts: String? = null,
     ) {
-        require(displayName.isNotBlank()) { "nom obligatoire" }
-        require(targetPackage.isNotBlank()) { "app cible obligatoire" }
+        require(displayName.isNotBlank()) { "name is required" }
+        require(targetPackage.isNotBlank()) { "target app is required" }
         val sanitizedHost = sanitizeHost(upstreamHost)
-        require(sanitizedHost.isNotBlank()) { "hôte obligatoire" }
-        require(upstreamPort in 1..65535) { "port hors plage" }
+        require(sanitizedHost.isNotBlank()) { "host is required" }
+        require(upstreamPort in 1..65535) { "port out of range" }
         when (mode) {
             ProxyMode.VPN -> requireFreeSyntheticEndpoint(id, syntheticIp, syntheticPort)
             ProxyMode.LOOPBACK -> {
                 require(loopbackPort != null && loopbackPort in 0..65535) {
-                    "port loopback invalide"
+                    "invalid loopback port"
                 }
             }
         }
-        val existing = dao.byId(id) ?: error("config $id introuvable")
-        // Idem côté update : si on change targetPackage, refuser si déjà pris
-        // par une AUTRE config (la sienne ne compte pas comme conflit).
+        val existing = dao.byId(id) ?: error("config $id not found")
+        // Same on update: when targetPackage changes, reject it if already
+        // taken by ANOTHER config (its own does not count as a conflict).
         if (existing.targetPackage != targetPackage) {
             dao.findByTargetPackage(targetPackage)?.let {
-                error("$targetPackage est déjà pris par la config '${it.displayName}'")
+                error("$targetPackage is already used by config '${it.displayName}'")
             }
         }
         dao.update(
@@ -227,8 +228,8 @@ class ConfigRepository(
     }
 
     /**
-     * Couple IP/port synthétique libre pour une config VPN. Toutes les routes
-     * partagent un seul tun : un doublon fait échouer la VPN entière côté core.
+     * Free synthetic IP/port pair for a VPN config. All routes share a single
+     * tun: a duplicate makes the whole VPN fail in the core.
      */
     suspend fun allocateSyntheticEndpoint(excludeId: String? = null): Pair<String, Int> =
         SyntheticEndpoints.allocate(takenSyntheticEndpoints(excludeId))
@@ -241,7 +242,7 @@ class ConfigRepository(
             ip to port
         }
 
-    /** Ports écoutés par les configs loopback, actives ou non. */
+    /** Ports listened on by loopback configs, active or not. */
     private suspend fun takenLoopbackPorts(): Set<Int> =
         dao.all().mapNotNullTo(HashSet()) { c ->
             c.loopbackPort.takeIf { c.mode == ProxyMode.LOOPBACK }
@@ -249,18 +250,18 @@ class ConfigRepository(
 
     private suspend fun requireFreeSyntheticEndpoint(selfId: String?, ip: String?, port: Int?) {
         require(SyntheticEndpoints.isValidIp(ip)) {
-            "IP synthétique invalide : attendu 192.0.2.1 à 192.0.2.253"
+            "invalid synthetic IP: expected 192.0.2.1 to 192.0.2.253"
         }
-        require(port != null && port in 1..65535) { "port synthétique invalide" }
+        require(port != null && port in 1..65535) { "invalid synthetic port" }
         val endpoint = ip!!.trim() to port
         if (endpoint in takenSyntheticEndpoints(selfId)) {
-            error("${endpoint.first}:${endpoint.second} est déjà utilisé par une autre config VPN")
+            error("${endpoint.first}:${endpoint.second} is already used by another VPN config")
         }
     }
 
     /**
-     * Tolère les saisies "https://host", "host/", "host:443" — on ne garde
-     * que le nom DNS (ou IP) qui finira en SNI et en cible TCP.
+     * Tolerates inputs like "https://host", "host/", "host:443": only the DNS
+     * name (or IP) is kept, which becomes the SNI and the TCP target.
      */
     private fun sanitizeHost(input: String): String {
         var h = input.trim()
@@ -268,7 +269,7 @@ class ConfigRepository(
             if (h.startsWith(p, ignoreCase = true)) h = h.substring(p.length)
         }
         h = h.substringBefore('/')
-        h = h.substringBefore(':') // port saisi accidentellement → on le drop
+        h = h.substringBefore(':') // port typed by accident: drop it
         return h
     }
 
@@ -276,12 +277,12 @@ class ConfigRepository(
         dao.setEnabled(id, enabled)
     }
 
-    /** Bouton « Arrêter » de la notification : coupe toutes les configs loopback. */
+    /** "Stop" button of the notification: turns off every loopback config. */
     suspend fun disableAllLoopback() {
         dao.disableAllOfMode(ProxyMode.LOOPBACK)
     }
 
-    /** Export zip de configs sélectionnées (sans la clé privée). */
+    /** Zip export of the selected configs (without the private key). */
     suspend fun exportZip(ids: Set<String>? = null): ByteArray {
         val all = dao.all()
         val subset = if (ids == null) all else all.filter { it.id in ids }
@@ -289,17 +290,17 @@ class ConfigRepository(
     }
 
     data class ImportSummary(
-        /** Configs importées avec leur .p12 → immédiatement opérationnelles. */
+        /** Configs imported with their .p12: immediately operational. */
         val importedWithKey: Int,
-        /** Configs importées sans .p12 → marquées needsKeystoreRefresh. */
+        /** Configs imported without .p12: flagged needsKeystoreRefresh. */
         val importedWithoutKey: Int,
-        /** Configs ignorées (id déjà connu / targetPackage déjà pris / erreur). */
+        /** Skipped configs (known id / targetPackage already taken / error). */
         val skipped: Int,
     )
 
     /**
-     * Pré-inspecte un bundle pour savoir s'il contient des .p12 (déploiement)
-     * → l'UI peut alors demander la passphrase AVANT l'import.
+     * Pre-inspects a bundle to find out whether it contains .p12 files
+     * (deployment), so the UI can ask for the passphrase BEFORE the import.
      */
     suspend fun peekZip(zipBytes: ByteArray): BundlePreview {
         val parsed = withContext(Dispatchers.Default) { ConfigBackup.parse(zipBytes) }
@@ -319,21 +320,21 @@ class ConfigRepository(
     }
 
     /**
-     * Importe un zip de bundle. Si certains configs ont un .p12 inline, on
-     * exige la `p12Passphrase` (commune à tous les .p12 du bundle — convention
-     * pour le cas déploiement IT).
+     * Imports a bundle zip. If some configs carry an inline .p12, the
+     * `p12Passphrase` is required (shared by every .p12 in the bundle, a
+     * convention for the IT deployment case).
      *
-     * Pour chaque config :
-     * - Si l'id existe déjà → skip (pas d'overwrite silencieux).
-     * - Si le targetPackage est déjà pris → skip.
-     * - L'alias Keystore du bundle est ignoré : on en génère un neuf, sinon un
-     *   bundle pourrait écraser la clé d'une config existante.
-     * - IP/port synthétique invalide ou déjà pris → réalloué.
-     * - Port loopback hors 1..65535 (`0` « éphémère » et absent compris) ou
-     *   déjà pris par une autre config loopback → tiré dans 10001..32767.
-     * - Sinon : si .p12 présent et passphrase fournie, on importe la clé dans
-     *   Keystore (après vérification du cert) puis on insère enabled=true ;
-     *   sinon needsKeystoreRefresh=true.
+     * For each config:
+     * - If the id already exists: skip (no silent overwrite).
+     * - If the targetPackage is already taken: skip.
+     * - The bundle's Keystore alias is ignored: a fresh one is generated,
+     *   otherwise a bundle could overwrite the key of an existing config.
+     * - Invalid or already taken synthetic IP/port: reallocated.
+     * - Loopback port outside 1..65535 (including `0` "ephemeral" and missing)
+     *   or already taken by another loopback config: drawn from 10001..32767.
+     * - Otherwise: if a .p12 is present and a passphrase was supplied, the key
+     *   is imported into the Keystore (after the cert check) and the config is
+     *   inserted with enabled=true; else needsKeystoreRefresh=true.
      */
     suspend fun importZip(
         zipBytes: ByteArray,
@@ -342,7 +343,7 @@ class ConfigRepository(
         try {
             importParsed(ConfigBackup.parse(zipBytes), p12Passphrase)
         } finally {
-            // Effacer la passphrase de la RAM dès qu'on n'en a plus besoin.
+            // Wipe the passphrase from RAM as soon as it is no longer needed.
             p12Passphrase?.fill('\u0000')
         }
     }
@@ -371,9 +372,9 @@ class ConfigRepository(
                     cfg = cfg.copy(syntheticIp = newIp, syntheticPort = newPort)
                 }
             } else if (cfg.mode == ProxyMode.LOOPBACK) {
-                // Un port pris fait échouer le bind d'une des deux configs ;
-                // 70000 serait tronqué au démarrage (toUShort) ; 0 changerait
-                // l'URL à recopier dans l'app cible à chaque démarrage.
+                // A taken port makes the bind of one of the two configs fail;
+                // 70000 would be truncated at startup (toUShort); 0 would change
+                // the URL to copy into the target app on every start.
                 val port = cfg.loopbackPort
                 val taken = takenLoopbackPorts()
                 if (port == null || port !in 1..65535 || port in taken) {
@@ -383,8 +384,8 @@ class ConfigRepository(
 
             if (pc.p12Bytes != null && p12Passphrase != null) {
                 val imported = try {
-                    // Le cert du bundle est vérifié AVANT l'écriture Keystore :
-                    // un .p12 qui ne correspond pas ne laisse aucune clé.
+                    // The bundle cert is checked BEFORE the Keystore write: a
+                    // .p12 that does not match leaves no key behind.
                     p12Importer.import(
                         pc.p12Bytes, p12Passphrase, cfg.keystoreAlias,
                         expectedLeafCertPem = cfg.certChainPem,
@@ -408,8 +409,8 @@ class ConfigRepository(
                     skipped++
                 }
             } else {
-                // Pas de .p12 (backup) OU pas de passphrase fournie : import
-                // métadonnées seul, la doxev devra fournir la clé après.
+                // No .p12 (backup) OR no passphrase supplied: metadata-only
+                // import, the user will have to provide the key afterwards.
                 try {
                     dao.insert(
                         cfg.copy(
@@ -427,10 +428,10 @@ class ConfigRepository(
     }
 
     /**
-     * Ré-importe la clé .p12 pour une config existante (post-import depuis
-     * fichier). Ré-utilise l'alias Keystore existant ; après succès, on
-     * efface needsKeystoreRefresh et on met à jour le niveau d'attestation
-     * effectivement obtenu sur ce device.
+     * Re-imports the .p12 key for an existing config (after an import from a
+     * file). Reuses the existing Keystore alias; on success, clears
+     * needsKeystoreRefresh and updates the attestation level actually obtained
+     * on this device.
      */
     suspend fun reimportKey(
         id: String,
@@ -438,10 +439,10 @@ class ConfigRepository(
         p12Passphrase: CharArray,
     ): Unit = withContext(Dispatchers.IO) {
         try {
-            val cfg = dao.byId(id) ?: error("config $id introuvable")
-            // Vérification de cohérence AVANT d'écrire dans le Keystore : le
-            // cert du .p12 doit être celui qu'on a en DB (sinon c'est un autre
-            // cert, on refuse sans toucher à l'alias).
+            val cfg = dao.byId(id) ?: error("config $id not found")
+            // Consistency check BEFORE writing to the Keystore: the .p12 cert
+            // must be the one stored in the DB (otherwise it is a different
+            // cert, rejected without touching the alias).
             val imported = p12Importer.import(
                 p12Bytes, p12Passphrase, cfg.keystoreAlias,
                 expectedLeafCertPem = cfg.certChainPem,

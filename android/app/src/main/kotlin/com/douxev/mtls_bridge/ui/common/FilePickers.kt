@@ -4,12 +4,13 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.widget.Toast
 import androidx.activity.result.ActivityResultLauncher
+import com.douxev.mtls_bridge.R
 
 /**
- * Lance un sélecteur de fichiers (GetContent / CreateDocument). Beaucoup de
- * téléviseurs Google TV / Android TV n'ont aucune app capable de les servir :
- * `launch` lève alors ActivityNotFoundException et faisait planter l'app.
- * On explique plutôt comment faire passer les fichiers.
+ * Launches a file picker (GetContent / CreateDocument). Many Google TV /
+ * Android TV devices have no app able to handle it: `launch` then throws
+ * ActivityNotFoundException, which used to crash the app. Instead, explain
+ * how to transfer the files.
  */
 fun <I> ActivityResultLauncher<I>.launchOrExplain(context: Context, input: I): Boolean =
     try {
@@ -18,8 +19,7 @@ fun <I> ActivityResultLauncher<I>.launchOrExplain(context: Context, input: I): B
     } catch (_: ActivityNotFoundException) {
         Toast.makeText(
             context,
-            "Aucun sélecteur de fichiers sur cet appareil : utilise " +
-                "« Configuration à distance » depuis un ordinateur ou un smartphone.",
+            context.getString(R.string.common_no_file_picker),
             Toast.LENGTH_LONG,
         ).show()
         false

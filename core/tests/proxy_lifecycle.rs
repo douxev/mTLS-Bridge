@@ -1,9 +1,9 @@
-//! Cycle de vie du proxy, de bout en bout contre un vrai serveur mTLS :
-//! - les URLs réécrites en mode loopback portent le token de path et sont
-//!   acceptées quand le client les suit,
-//! - `LoopbackHandle::stop()` ferme aussi les sessions keepalive en cours,
-//! - un upstream IPv6 littéral (`::1`) est joignable,
-//! - `start_vpn` ferme le tun_fd quand la table de routage est invalide.
+//! Proxy lifecycle, end to end against a real mTLS server:
+//! - URLs rewritten in loopback mode carry the path token and are accepted
+//!   when the client follows them,
+//! - `LoopbackHandle::stop()` also closes ongoing keep-alive sessions,
+//! - an IPv6 literal upstream (`::1`) is reachable,
+//! - `start_vpn` closes the tun_fd when the routing table is invalid.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,8 +21,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 
-// --- PKI helpers (dupliqués volontairement : chaque fichier de test reste
-// autonome). ---
+// --- PKI helpers (deliberately duplicated: each test file stays
+// self-contained). ---
 
 struct Pki {
     ca_pem: Vec<u8>,
@@ -82,8 +82,8 @@ fn parse_pkcs8(pem: &[u8]) -> PrivateKeyDer<'static> {
     PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.secret_pkcs8_der().to_vec()))
 }
 
-/// Lit une réponse HTTP/1.1 complète (headers + body Content-Length).
-/// `None` sur EOF avant la moindre donnée.
+/// Reads a complete HTTP/1.1 response (headers + Content-Length body).
+/// `None` on EOF before any data.
 async fn read_response<S: AsyncRead + Unpin>(
     s: &mut S,
     buf: &mut Vec<u8>,
@@ -110,7 +110,7 @@ async fn read_response<S: AsyncRead + Unpin>(
         .unwrap_or(0);
     while buf.len() < head_end + len {
         let n = s.read(&mut tmp).await.unwrap();
-        assert!(n > 0, "EOF au milieu du body");
+        assert!(n > 0, "EOF in the middle of the body");
         buf.extend_from_slice(&tmp[..n]);
     }
     let body = buf[head_end..head_end + len].to_vec();
@@ -118,11 +118,11 @@ async fn read_response<S: AsyncRead + Unpin>(
     Some((head, body))
 }
 
-/// Serveur HTTPS mTLS keepalive : ne ferme jamais la connexion de lui-même.
-/// - `/json` → JSON contenant son URL canonique absolue,
-/// - `/start` → 302 vers son URL canonique,
-/// - `/next…` → `next-ok`,
-/// - `/host` → la valeur du header `Host` reçu.
+/// Keep-alive mTLS HTTPS server: never closes the connection by itself.
+/// - `/json` -> JSON containing its absolute canonical URL,
+/// - `/start` -> 302 to its canonical URL,
+/// - `/next...` -> `next-ok`,
+/// - `/host` -> the value of the received `Host` header.
 async fn spawn_keepalive_server(pki: &Pki, bind: &str) -> std::io::Result<u16> {
     let mut roots = RootCertStore::empty();
     for ca in parse_certs(&pki.ca_pem) {
@@ -239,14 +239,14 @@ async fn get(s: &mut TcpStream, buf: &mut Vec<u8>, path: &str) -> (String, Vec<u
         .unwrap();
     tokio::time::timeout(Duration::from_secs(5), read_response(s, buf))
         .await
-        .expect("timeout en attente de la réponse")
-        .expect("connexion fermée au lieu d'une réponse")
+        .expect("timeout waiting for the response")
+        .expect("connection closed instead of a response")
 }
 
 // --- Tests ---
 
-/// Les URLs réécrites portent `/<token>` et passent le contrôle du token
-/// quand le client les suit sur la même connexion.
+/// Rewritten URLs carry `/<token>` and pass the token check when the client
+/// follows them on the same connection.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rewritten_urls_carry_path_token_and_are_accepted() -> Result<()> {
     init_crypto_provider();
@@ -271,7 +271,7 @@ async fn rewritten_urls_carry_path_token_and_are_accepted() -> Result<()> {
         "head: {head}"
     );
 
-    // Le client suit l'URL réécrite : le token est accepté et retiré.
+    // The client follows the rewritten URL: the token is accepted and stripped.
     let path = next
         .strip_prefix(&format!("http://127.0.0.1:{}", h.port()))
         .unwrap();
@@ -282,8 +282,8 @@ async fn rewritten_urls_carry_path_token_and_are_accepted() -> Result<()> {
     Ok(())
 }
 
-/// `stop()` ferme aussi les sessions en cours, même quand l'upstream garde
-/// la connexion ouverte (keepalive).
+/// `stop()` also closes ongoing sessions, even when the upstream keeps the
+/// connection open (keep-alive).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stop_closes_active_sessions() -> Result<()> {
     init_crypto_provider();
@@ -309,11 +309,11 @@ async fn stop_closes_active_sessions() -> Result<()> {
     let mut tmp = [0u8; 64];
     let n = tokio::time::timeout(Duration::from_secs(3), s.read(&mut tmp))
         .await
-        .expect("la session doit être fermée par stop()")
+        .expect("the session must be closed by stop()")
         .unwrap_or(0);
-    assert_eq!(n, 0, "EOF attendu après stop()");
+    assert_eq!(n, 0, "EOF expected after stop()");
 
-    // L'événement Stopped arrive une fois les sessions fermées.
+    // The Stopped event arrives once the sessions are closed.
     tokio::time::timeout(Duration::from_secs(3), async {
         while !audit
             .0
@@ -326,12 +326,12 @@ async fn stop_closes_active_sessions() -> Result<()> {
         }
     })
     .await
-    .expect("événement Stopped");
+    .expect("Stopped event");
     Ok(())
 }
 
-/// Upstream IPv6 littéral : connexion par tuple (host, port) et header
-/// `Host` entre crochets (`Host: ::1` est invalide).
+/// IPv6 literal upstream: connection through a (host, port) tuple and a
+/// bracketed `Host` header (`Host: ::1` is invalid).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bridge_connects_to_ipv6_literal_upstream() -> Result<()> {
     init_crypto_provider();
@@ -339,7 +339,7 @@ async fn bridge_connects_to_ipv6_literal_upstream() -> Result<()> {
     let upstream = match spawn_keepalive_server(&pki, "[::1]:0").await {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("IPv6 loopback indisponible ({e}), test ignoré");
+            eprintln!("IPv6 loopback unavailable ({e}), test skipped");
             return Ok(());
         }
     };
@@ -359,7 +359,7 @@ async fn bridge_connects_to_ipv6_literal_upstream() -> Result<()> {
     assert!(head.starts_with("HTTP/1.1 200"), "head: {head}");
     assert_eq!(body, b"next-ok");
     let (_, body) = get(&mut s, &mut buf, "/host").await;
-    assert_eq!(body, b"[::1]", "Host reçu par l'upstream");
+    assert_eq!(body, b"[::1]", "Host received by the upstream");
     h.stop();
     let events = audit.0.lock().unwrap().clone();
     assert!(
@@ -371,8 +371,8 @@ async fn bridge_connects_to_ipv6_literal_upstream() -> Result<()> {
     Ok(())
 }
 
-/// Route invalide (PEM vides) : `start_vpn` échoue mais ferme le tun_fd
-/// qu'on lui a confié — sinon l'interface VPN resterait montée.
+/// Invalid route (empty PEMs): `start_vpn` fails but closes the tun_fd it
+/// was handed, otherwise the VPN interface would stay up.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[tokio::test]
 async fn start_vpn_closes_tun_fd_when_setup_fails() {
@@ -414,14 +414,11 @@ async fn start_vpn_closes_tun_fd_when_setup_fails() {
         Arc::new(CollectingAudit::default()),
     )
     .await;
-    assert!(
-        res.is_err(),
-        "la route invalide doit faire échouer start_vpn"
-    );
+    assert!(res.is_err(), "the invalid route must make start_vpn fail");
 
     let mut b = [0u8; 1];
     let n = theirs
         .read(&mut b)
-        .expect("le tun_fd doit être fermé (EOF), pas laissé ouvert");
+        .expect("the tun_fd must be closed (EOF), not left open");
     assert_eq!(n, 0);
 }

@@ -5,6 +5,7 @@ import android.net.NetworkCapabilities
 import android.util.Base64
 import android.util.Log
 import com.douxev.mtls_bridge.MtlsApplication
+import com.douxev.mtls_bridge.R
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.IOException
@@ -34,27 +35,27 @@ import kotlinx.coroutines.sync.Semaphore
 import org.json.JSONObject
 
 /**
- * Console d'administration sur le réseau local : sert une page web (HTTPS)
- * qui permet de configurer l'app depuis le navigateur d'un ordinateur ou d'un
- * smartphone. Indispensable sur Android TV / Google TV, où saisir un hôte, un
- * .p12 et sa passphrase à la télécommande est pénible (et où il n'y a souvent
- * pas de sélecteur de fichiers).
+ * Admin console on the local network: serves a web page (HTTPS) used to
+ * configure the app from the browser of a computer or a smartphone. Essential
+ * on Android TV / Google TV, where typing a host, a .p12 and its passphrase
+ * with the remote control is painful (and where there is often no file
+ * picker).
  *
- * Sécurité :
- * - ne tourne que tant que l'écran « Configuration à distance » est ouvert,
- *   et s'arrête seul après [IDLE_TIMEOUT_MS] sans requête ;
- * - HTTPS (cert auto-signé, clé dans le Keystore, empreinte affichée) ;
- * - appairage par PIN à 6 chiffres affiché sur l'écran de l'appareil, à usage
- *   unique, renouvelé après [MAX_PIN_ATTEMPTS] échecs (+ verrouillage) ;
- * - session = jeton aléatoire envoyé en `Authorization: Bearer` (pas de
- *   cookie, donc pas de CSRF possible depuis une autre page).
+ * Security:
+ * - only runs while the "Remote configuration" screen is open, and stops by
+ *   itself after [IDLE_TIMEOUT_MS] without a request;
+ * - HTTPS (self-signed cert, key in the Keystore, fingerprint displayed);
+ * - pairing with a 6-digit PIN shown on the device screen, single use,
+ *   renewed after [MAX_PIN_ATTEMPTS] failures (+ lockout);
+ * - session = random token sent as `Authorization: Bearer` (no cookie, so no
+ *   CSRF possible from another page).
  */
 class RemoteAdminServer(private val app: MtlsApplication) {
 
     data class Status(
         val running: Boolean = false,
         val starting: Boolean = false,
-        /** `https://ip:port/` pour chaque interface réseau locale. */
+        /** `https://ip:port/` for each local network interface. */
         val urls: List<String> = emptyList(),
         val pin: String = "",
         val fingerprint: String = "",
@@ -62,7 +63,7 @@ class RemoteAdminServer(private val app: MtlsApplication) {
         val lastActivity: String? = null,
         val error: String? = null,
     ) {
-        /** Contenu du QR code : le PIN voyage dans le fragment, jamais envoyé au serveur. */
+        /** QR code content: the PIN travels in the fragment, never sent to the server. */
         val qrPayload: String? get() = urls.firstOrNull()?.let { "$it#pin=$pin" }
     }
 
@@ -70,7 +71,7 @@ class RemoteAdminServer(private val app: MtlsApplication) {
     val status: StateFlow<Status> = _status.asStateFlow()
 
     private val rng = SecureRandom()
-    private val sessions = ConcurrentHashMap<String, Long>() // jeton -> dernier usage (ms)
+    private val sessions = ConcurrentHashMap<String, Long>() // token -> last use (ms)
     private val api = RemoteAdminApi(app) { msg -> _status.update { it.copy(lastActivity = msg) } }
     private val connections = Semaphore(MAX_CONNECTIONS)
 
@@ -92,8 +93,8 @@ class RemoteAdminServer(private val app: MtlsApplication) {
                 val tls = RemoteTls.material()
                 val ss = bind(tls)
                 try {
-                    // stop() a pu passer pendant le bind : ne pas laisser un
-                    // socket d'écoute orphelin.
+                    // stop() may have run during the bind: do not leave an
+                    // orphan listening socket behind.
                     if (!isActive) return@launch
                     serverSocket = ss
                     lastRequestMs = System.currentTimeMillis()
@@ -110,8 +111,13 @@ class RemoteAdminServer(private val app: MtlsApplication) {
                     runCatching { ss.close() }
                 }
             } catch (t: Throwable) {
-                Log.e(TAG, "démarrage de la console impossible", t)
-                _status.value = Status(error = "Démarrage impossible : ${t.message ?: t::class.java.simpleName}")
+                Log.e(TAG, "cannot start the console", t)
+                _status.value = Status(
+                    error = app.getString(
+                        R.string.svc_remote_start_failed,
+                        t.message ?: t::class.java.simpleName,
+                    )
+                )
                 stopInternal(keepStatus = true)
             }
         }
@@ -119,7 +125,7 @@ class RemoteAdminServer(private val app: MtlsApplication) {
 
     fun stop() = stopInternal(keepStatus = false)
 
-    /** Révoque toutes les sessions ouvertes (les navigateurs devront se ré-appairer). */
+    /** Revokes every open session (browsers will have to pair again). */
     fun disconnectAll() {
         sessions.clear()
         rotatePin()
@@ -141,8 +147,8 @@ class RemoteAdminServer(private val app: MtlsApplication) {
         val ss = try {
             tls.socketFactory.createServerSocket(DEFAULT_PORT, BACKLOG, any)
         } catch (_: BindException) {
-            // Port pris (autre app, instance précédente pas encore libérée) :
-            // port éphémère, l'URL affichée suit.
+            // Port taken (another app, previous instance not released yet):
+            // use an ephemeral port, the displayed URL follows.
             tls.socketFactory.createServerSocket(0, BACKLOG, any)
         } as SSLServerSocket
         ss.enabledProtocols = ss.supportedProtocols
@@ -156,7 +162,7 @@ class RemoteAdminServer(private val app: MtlsApplication) {
             val sock = try {
                 ss.accept()
             } catch (_: SocketException) {
-                break // close() depuis stop()
+                break // close() from stop()
             }
             if (!connections.tryAcquire()) {
                 runCatching { sock.close() }
@@ -184,17 +190,17 @@ class RemoteAdminServer(private val app: MtlsApplication) {
                     lastRequestMs = System.currentTimeMillis()
                     route(req, peer)
                 } catch (e: HttpException) {
-                    HttpResponse.error(e.status, e.message ?: "erreur")
+                    HttpResponse.error(e.status, e.message ?: "error")
                 }
                 MiniHttp.writeResponse(output, resp)
             }
         } catch (_: SSLException) {
-            // Cas normal au premier contact : le navigateur refuse le cert
-            // auto-signé tant que l'utilisatrice ne l'a pas accepté.
+            // Normal on first contact: the browser rejects the self-signed
+            // cert until the user has accepted it.
         } catch (_: IOException) {
-            // Timeout ou connexion coupée côté client.
+            // Timeout or connection dropped by the client.
         } catch (t: Throwable) {
-            Log.w(TAG, "requête de $peer en échec", t)
+            Log.w(TAG, "request from $peer failed", t)
         }
     }
 
@@ -204,7 +210,7 @@ class RemoteAdminServer(private val app: MtlsApplication) {
 
         val token = req.header("authorization")?.removePrefix("Bearer ")?.trim()
         if (token.isNullOrEmpty() || !touchSession(token)) {
-            return HttpResponse.error(401, "session expirée : saisis le PIN affiché sur l'appareil")
+            return HttpResponse.error(401, "session expired: enter the PIN shown on the device")
         }
         if (req.path == "/api/logout" && req.method == "POST") {
             sessions.remove(token)
@@ -218,7 +224,7 @@ class RemoteAdminServer(private val app: MtlsApplication) {
         val now = System.currentTimeMillis()
         if (now < lockedUntilMs) {
             val s = (lockedUntilMs - now + 999) / 1000
-            return HttpResponse.error(429, "trop d'essais : nouveau PIN affiché, réessaie dans $s s")
+            return HttpResponse.error(429, "too many attempts: a new PIN is shown, try again in $s s")
         }
         val given = req.json().optString("pin").trim()
         val ok = synchronized(this) {
@@ -232,12 +238,12 @@ class RemoteAdminServer(private val app: MtlsApplication) {
             }
             match
         }
-        if (!ok) return HttpResponse.error(401, "PIN incorrect")
+        if (!ok) return HttpResponse.error(401, "incorrect PIN")
         val token = randomToken()
         sessions[token] = now
-        rotatePin() // usage unique : un autre appareil devra lire le nouveau PIN
+        rotatePin() // single use: another device will have to read the new PIN
         publishSessions()
-        _status.update { it.copy(lastActivity = "Navigateur appairé") }
+        _status.update { it.copy(lastActivity = app.getString(R.string.svc_remote_browser_paired)) }
         return HttpResponse.ok(JSONObject().put("token", token))
     }
 
@@ -254,12 +260,12 @@ class RemoteAdminServer(private val app: MtlsApplication) {
     }
 
     private fun asset(req: HttpRequest): HttpResponse {
-        if (req.method != "GET" && req.method != "HEAD") return HttpResponse.error(405, "méthode refusée")
+        if (req.method != "GET" && req.method != "HEAD") return HttpResponse.error(405, "method not allowed")
         val (file, type) = when (req.path) {
             "/", "/index.html" -> "index.html" to "text/html; charset=utf-8"
             "/app.js" -> "app.js" to "text/javascript; charset=utf-8"
             "/app.css" -> "app.css" to "text/css; charset=utf-8"
-            else -> return HttpResponse.error(404, "introuvable")
+            else -> return HttpResponse.error(404, "not found")
         }
         val bytes = app.assets.open("remote/$file").use { it.readBytes() }
         return HttpResponse(200, type, bytes)
@@ -271,7 +277,7 @@ class RemoteAdminServer(private val app: MtlsApplication) {
             if (System.currentTimeMillis() - lastRequestMs > IDLE_TIMEOUT_MS) {
                 stopInternal(
                     keepStatus = false,
-                    reason = "Arrêtée après ${IDLE_TIMEOUT_MS / 60_000} min sans activité",
+                    reason = app.getString(R.string.svc_remote_idle_stopped, IDLE_TIMEOUT_MS / 60_000),
                 )
                 return
             }
@@ -294,11 +300,10 @@ class RemoteAdminServer(private val app: MtlsApplication) {
         b.isNotEmpty() && MessageDigest.isEqual(a.toByteArray(), b.toByteArray())
 
     /**
-     * IPv4 joignables depuis le réseau local : celles du réseau actif s'il
-     * s'agit du Wi-Fi ou de l'Ethernet, puis les autres interfaces LAN. On
-     * écarte les données mobiles (rmnet…, injoignables depuis le LAN), le
-     * 464XLAT (`v4-rmnet*`, 192.0.0.0/24) et notre propre tun VPN
-     * (192.0.2.0/24).
+     * IPv4 addresses reachable from the local network: those of the active
+     * network if it is Wi-Fi or Ethernet, then the other LAN interfaces.
+     * Mobile data (rmnet..., unreachable from the LAN), 464XLAT (`v4-rmnet*`,
+     * 192.0.0.0/24) and our own VPN tun (192.0.2.0/24) are excluded.
      */
     private fun localUrls(port: Int): List<String> {
         val cm = app.getSystemService(ConnectivityManager::class.java)
@@ -327,7 +332,7 @@ class RemoteAdminServer(private val app: MtlsApplication) {
 
     private companion object {
         const val TAG = "mtls_bridge.remote"
-        /** Préfixes d'interfaces jamais joignables depuis le LAN. */
+        /** Interface prefixes never reachable from the LAN. */
         val NON_LAN_INTERFACES = listOf("tun", "rmnet", "v4-", "ccmni", "ppp", "ipsec", "dummy")
         const val DEFAULT_PORT = 47443
         const val BACKLOG = 8

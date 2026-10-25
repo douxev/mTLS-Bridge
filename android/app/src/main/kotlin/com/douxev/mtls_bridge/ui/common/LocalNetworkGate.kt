@@ -9,15 +9,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.runtime.LocalNetworkAccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 /**
- * Demande la permission « réseau local » (Android 17+) avant une action qui
- * démarre un proxy, si l'un des hôtes upstream se résout en adresse du LAN.
- * L'action s'exécute dans tous les cas : un refus ne bloque pas la config,
- * il est seulement signalé (les connexions vers ce backend échoueront).
+ * Requests the "local network" permission (Android 17+) before an action that
+ * starts a proxy, if one of the upstream hosts resolves to a LAN address.
+ * The action runs in every case: a refusal does not block the config, it is
+ * only reported (connections to that backend will fail).
  */
 class LocalNetworkGate internal constructor(
     private val context: Context,
@@ -43,7 +44,7 @@ class LocalNetworkGate internal constructor(
         }
     }
 
-    /** Vérification sans action utilisatrice : ne redemande pas après un refus. */
+    /** Check without a user gesture: does not ask again after a refusal. */
     fun checkQuietly(hosts: Collection<String>) {
         if (!refused && hosts.isNotEmpty()) runAfterCheck(hosts)
     }
@@ -53,8 +54,7 @@ class LocalNetworkGate internal constructor(
             refused = true
             Toast.makeText(
                 context,
-                "Accès au réseau local refusé : le proxy ne pourra pas joindre un " +
-                    "backend du LAN. Réglages → Applis → mTLS Bridge → Appareils à proximité.",
+                context.getString(R.string.common_local_network_denied),
                 Toast.LENGTH_LONG,
             ).show()
         }

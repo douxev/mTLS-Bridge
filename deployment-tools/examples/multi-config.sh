@@ -10,12 +10,12 @@ set -euo pipefail
 : "${BACKEND_CA_KEY:?set BACKEND_CA_KEY to your backend CA private key path}"
 
 USER_NAME="${1:-alice}"
-# Utilisé tel quel dans les id, noms de fichiers et le JSON : slug uniquement.
+# Used as is in the ids, file names and JSON: slug only.
 [[ $USER_NAME =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
   || { echo "error: user name must match [A-Za-z0-9][A-Za-z0-9._-]*" >&2; exit 1; }
 P12_PASSPHRASE="$(openssl rand -base64 24)"
-# Ports loopback fixes, tirés dans 10001..32767 comme l'app (qui en tire un
-# autre à l'import si le port est déjà pris sur le téléphone).
+# Fixed loopback ports, drawn in 10001..32767 like the app does (the app
+# draws another one on import if the port is already taken on the phone).
 random_port() { echo $(( 10001 + ((RANDOM << 15) | RANDOM) % 22767 )); }
 JELLYFIN_PORT="$(random_port)"
 NEXTCLOUD_PORT="$(random_port)"
@@ -35,7 +35,7 @@ emit_artifacts() {
     -days 365 \
     -out "$WORK/${cfg_id}-cert.pem" 2>/dev/null
   cp "$BACKEND_CA_CRT" "$WORK/${cfg_id}-ca.pem"
-  # Passphrase par l'environnement (env:), jamais en argument visible dans ps.
+  # Passphrase through the environment (env:), never as an argument visible in ps.
   P12_PASSPHRASE="$P12_PASSPHRASE" openssl pkcs12 -export \
     -in "$WORK/${cfg_id}-cert.pem" \
     -inkey "$WORK/${cfg_id}.key" \
@@ -94,7 +94,7 @@ OUT="mtls_bridge-bundle-${USER_NAME}.zip"
 ( cd "$WORK" && zip -q "$OUT" ./* )
 mv "$WORK/$OUT" "./$OUT"
 
-echo "  ✓ bundle:     ./${OUT}"
-echo "  ✓ passphrase: ${P12_PASSPHRASE}"
-echo "  ✓ Jellyfin :  http://127.0.0.1:${JELLYFIN_PORT}/"
-echo "  ✓ Nextcloud : http://127.0.0.1:${NEXTCLOUD_PORT}/"
+echo "  bundle:     ./${OUT}"
+echo "  passphrase: ${P12_PASSPHRASE}"
+echo "  Jellyfin:   http://127.0.0.1:${JELLYFIN_PORT}/"
+echo "  Nextcloud:  http://127.0.0.1:${NEXTCLOUD_PORT}/"

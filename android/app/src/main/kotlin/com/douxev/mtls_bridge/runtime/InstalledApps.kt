@@ -6,12 +6,12 @@ import android.content.pm.PackageManager
 import com.douxev.mtls_bridge.ui.add.InstalledApp
 
 /**
- * Apps utilisables comme cible : lançables depuis le launcher du téléphone
- * (LAUNCHER) **ou** depuis celui d'Android TV (LEANBACK_LAUNCHER). Les apps
- * réservées à la TV comme `org.jellyfin.androidtv` n'ont souvent que la
- * seconde et passeraient sinon à la trappe.
+ * Apps usable as a target: launchable from the phone launcher (LAUNCHER)
+ * **or** from the Android TV one (LEANBACK_LAUNCHER). TV-only apps such as
+ * `org.jellyfin.androidtv` often only have the latter and would otherwise be
+ * left out.
  *
- * Appel bloquant (PackageManager) : à exécuter hors du thread principal.
+ * Blocking call (PackageManager): run it off the main thread.
  */
 object InstalledApps {
 
@@ -28,7 +28,7 @@ object InstalledApps {
             .sortedBy { it.label.lowercase() }
             .toList()
 
-    /** Intent de lancement : launcher classique d'abord, puis Android TV. */
+    /** Launch intent: regular launcher first, then Android TV. */
     fun launchIntent(pm: PackageManager, packageName: String): Intent? =
         pm.getLaunchIntentForPackage(packageName)
             ?: pm.getLeanbackLaunchIntentForPackage(packageName)

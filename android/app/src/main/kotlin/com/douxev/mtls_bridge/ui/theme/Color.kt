@@ -2,7 +2,7 @@ package com.douxev.mtls_bridge.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Palette dérivée d'un bleu nuit "tunnel TLS" — sobre, lisible, contraste AA.
+// Palette derived from a "TLS tunnel" midnight blue: understated, readable, AA contrast.
 val LockBlue80 = Color(0xFF9EC3FF)
 val LockBlue40 = Color(0xFF1F3F8C)
 val LockTeal80 = Color(0xFF7DD7C9)

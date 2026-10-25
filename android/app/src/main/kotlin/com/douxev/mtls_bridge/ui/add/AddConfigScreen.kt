@@ -43,10 +43,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.data.ProxyMode
 import com.douxev.mtls_bridge.ui.common.launchOrExplain
 import com.douxev.mtls_bridge.ui.common.rememberLocalNetworkGate
@@ -78,10 +80,10 @@ fun AddConfigScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Nouvelle config") },
+                title = { Text(stringResource(R.string.add_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
             )
@@ -91,8 +93,8 @@ fun AddConfigScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                // Edge-to-edge (obligatoire en targetSdk 36) : le clavier ne
-                // redimensionne plus la fenêtre, on réserve sa hauteur ici.
+                // Edge-to-edge (mandatory with targetSdk 36): the keyboard no
+                // longer resizes the window, so its height is reserved here.
                 .consumeWindowInsets(padding)
                 .imePadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
@@ -100,8 +102,8 @@ fun AddConfigScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (LocalIsTv.current) {
-                // Sur TV : pas toujours de sélecteur de fichiers, et la saisie
-                // à la télécommande est lente. La console web fait tout ça.
+                // On TV: there is not always a file picker, and typing with the
+                // remote is slow. The web console handles all of this.
                 Card(
                     onClick = onRemoteClick,
                     modifier = Modifier.fillMaxWidth().tvFocusHighlight(),
@@ -110,10 +112,9 @@ fun AddConfigScreen(
                     ),
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
-                        Text("Plus simple depuis un ordinateur", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.add_tv_card_title), style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Ouvre la configuration à distance et dépose le .p12 et la CA " +
-                                "depuis un navigateur sur le même réseau.",
+                            stringResource(R.string.add_tv_card_text),
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
@@ -122,7 +123,7 @@ fun AddConfigScreen(
             OutlinedTextField(
                 value = state.displayName,
                 onValueChange = { v -> vm.update { copy(displayName = v) } },
-                label = { Text("Nom (Jellyfin, Nextcloud…)") },
+                label = { Text(stringResource(R.string.add_label_name)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -133,14 +134,14 @@ fun AddConfigScreen(
                 OutlinedTextField(
                     value = state.upstreamHost,
                     onValueChange = { v -> vm.update { copy(upstreamHost = v) } },
-                    label = { Text("Hôte upstream") },
+                    label = { Text(stringResource(R.string.common_label_upstream_host)) },
                     singleLine = true,
                     modifier = Modifier.weight(2f),
                 )
                 OutlinedTextField(
                     value = state.upstreamPort,
                     onValueChange = { v -> vm.update { copy(upstreamPort = v.filter { c -> c.isDigit() }) } },
-                    label = { Text("Port") },
+                    label = { Text(stringResource(R.string.common_label_port)) },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
@@ -149,7 +150,7 @@ fun AddConfigScreen(
             OutlinedTextField(
                 value = state.sni,
                 onValueChange = { v -> vm.update { copy(sni = v) } },
-                label = { Text("SNI (optionnel)") },
+                label = { Text(stringResource(R.string.common_label_sni)) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -161,20 +162,20 @@ fun AddConfigScreen(
                     OutlinedTextField(
                         value = state.syntheticIp,
                         onValueChange = { v -> vm.update { copy(syntheticIp = v) } },
-                        label = { Text("IP synthétique (192.0.2.X)") },
+                        label = { Text(stringResource(R.string.add_label_synthetic_ip)) },
                         singleLine = true,
                         modifier = Modifier.weight(2f),
                     )
                     OutlinedTextField(
                         value = state.syntheticPort,
                         onValueChange = { v -> vm.update { copy(syntheticPort = v.filter { c -> c.isDigit() }) } },
-                        label = { Text("Port") },
+                        label = { Text(stringResource(R.string.common_label_port)) },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                     )
                 }
                 Text(
-                    "Configure l'app cible avec  http://${state.syntheticIp}:${state.syntheticPort}",
+                    stringResource(R.string.add_vpn_hint, "http://${state.syntheticIp}:${state.syntheticPort}"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -182,7 +183,7 @@ fun AddConfigScreen(
                 OutlinedTextField(
                     value = state.loopbackPort,
                     onValueChange = { v -> vm.update { copy(loopbackPort = v.filter { c -> c.isDigit() }) } },
-                    label = { Text("Port loopback (0 = éphémère)") },
+                    label = { Text(stringResource(R.string.common_label_loopback_port)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -206,21 +207,21 @@ fun AddConfigScreen(
             }
 
             FilePickerRow(
-                label = "Certificat client (.p12)",
+                label = stringResource(R.string.add_label_p12),
                 fileName = state.p12Uri?.lastPathSegment,
                 onPick = { pickP12.launchOrExplain(context, "*/*") },
             )
             OutlinedTextField(
                 value = state.p12Passphrase,
                 onValueChange = { v -> vm.update { copy(p12Passphrase = v) } },
-                label = { Text("Passphrase du .p12") },
+                label = { Text(stringResource(R.string.common_label_p12_passphrase)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 modifier = Modifier.fillMaxWidth(),
             )
 
             FilePickerRow(
-                label = "CA upstream pinné (.pem)",
+                label = stringResource(R.string.add_label_ca),
                 fileName = state.caUri?.lastPathSegment,
                 onPick = { pickCa.launchOrExplain(context, "*/*") },
             )
@@ -234,10 +235,9 @@ fun AddConfigScreen(
                     onCheckedChange = { v -> vm.update { copy(deleteFilesAfterImport = v) } },
                 )
                 Column {
-                    Text("Supprimer les fichiers .p12 et .pem après import")
+                    Text(stringResource(R.string.add_delete_files))
                     Text(
-                        "Recommandé : la clé est ré-importée dans le Keystore matériel, " +
-                            "garder les fichiers en clair sur le filesystem est inutile et risqué.",
+                        stringResource(R.string.add_delete_files_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -253,13 +253,13 @@ fun AddConfigScreen(
             }
 
             Button(
-                // Une config loopback démarre dès sa création : la permission
-                // réseau local (Android 17) doit être demandée avant.
+                // A loopback config starts as soon as it is created: the local
+                // network permission (Android 17) must be requested first.
                 onClick = { localNetworkGate.runAfterCheck(listOf(state.upstreamHost)) { vm.submit() } },
                 enabled = !state.submitting,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (state.submitting) "Import en cours…" else "Importer")
+                Text(stringResource(if (state.submitting) R.string.add_importing else R.string.common_import))
             }
         }
     }
@@ -273,10 +273,10 @@ private fun AppPicker(state: AddConfigUiState, vm: AddConfigViewModel) {
     Box(modifier = Modifier.fillMaxWidth()) {
         OutlinedTextField(
             readOnly = true,
-            enabled = false, // empêche le clavier ; on intercepte le tap via clickable.
-            value = current?.let { "${it.label}  (${it.packageName})" } ?: "Choisir l'app cible",
+            enabled = false, // Prevents the keyboard; the tap is intercepted with clickable.
+            value = current?.let { "${it.label}  (${it.packageName})" } ?: stringResource(R.string.common_choose_target_app),
             onValueChange = {},
-            label = { Text("App cliente") },
+            label = { Text(stringResource(R.string.common_label_client_app)) },
             trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) },
             modifier = Modifier
                 .fillMaxWidth()
@@ -324,15 +324,15 @@ private fun ModeSelector(
         FilterChip(
             selected = state.mode == ProxyMode.LOOPBACK,
             onClick = { vm.update { copy(mode = ProxyMode.LOOPBACK) } },
-            label = { Text("Loopback (recommandé)") },
+            label = { Text(stringResource(R.string.add_mode_loopback_recommended)) },
         )
         FilterChip(
             selected = state.mode == ProxyMode.VPN,
             onClick = { vm.update { copy(mode = ProxyMode.VPN) } },
-            label = { Text("VPN") },
+            label = { Text(stringResource(R.string.common_mode_vpn)) },
         )
         IconButton(onClick = onCompareModes) {
-            Icon(Icons.Default.Info, contentDescription = "Comparer les modes")
+            Icon(Icons.Default.Info, contentDescription = stringResource(R.string.add_compare_modes))
         }
     }
 }
@@ -360,15 +360,11 @@ private fun PathTokenSection(
                 )
                 Column(modifier = Modifier.padding(start = 8.dp)) {
                     Text(
-                        "Token d'isolation dans l'URL",
+                        stringResource(R.string.common_path_token_title),
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        "Recommandé : empêche les autres apps du téléphone d'utiliser " +
-                            "votre certificat via le port loopback. Les apps à base de " +
-                            "webview (Jellyfin Android, Nextcloud) fonctionnent : après la " +
-                            "première page ouverte avec le token, un cookie de session " +
-                            "couvre leurs chemins absolus.",
+                        stringResource(R.string.add_path_token_text),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -386,7 +382,7 @@ private fun PathTokenSection(
                         modifier = Modifier.weight(1f),
                     )
                     androidx.compose.material3.TextButton(onClick = onRegenerate) {
-                        Text("Régénérer")
+                        Text(stringResource(R.string.common_regenerate))
                     }
                 }
             }
@@ -400,7 +396,7 @@ private fun PathTokenSection(
     }
 }
 
-/** Partagé avec l'écran d'édition. */
+/** Shared with the edit screen. */
 @Composable
 internal fun ExtraCanonicalHostsField(
     value: String,
@@ -410,13 +406,9 @@ internal fun ExtraCanonicalHostsField(
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
-        label = { Text("Hôtes canoniques additionnels (optionnel)") },
+        label = { Text(stringResource(R.string.add_extra_hosts_label)) },
         supportingText = {
-            Text(
-                "Autres noms d'hôte que le serveur écrit dans ses URLs " +
-                    "(ex. overwrite.cli.url de Nextcloud), séparés par des virgules. " +
-                    "Réécrits vers l'URL loopback comme l'hôte upstream.",
-            )
+            Text(stringResource(R.string.add_extra_hosts_hint))
         },
         enabled = enabled,
         modifier = Modifier.fillMaxWidth(),
@@ -431,7 +423,7 @@ private fun FilePickerRow(label: String, fileName: String?, onPick: () -> Unit) 
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = fileName ?: "Aucun fichier",
+            text = fileName ?: stringResource(R.string.add_no_file),
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f),
         )

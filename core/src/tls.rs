@@ -12,23 +12,23 @@ use crate::signer::{
     scheme_to_rustls, CallbackResolvesClientCert, CallbackSigningKey, TlsSignatureScheme,
 };
 
-/// Construit le `ClientConfig` rustls pour une config donnée.
+/// Builds the rustls `ClientConfig` for a given config.
 ///
-/// Pour l'instant on supporte uniquement [`PrivateKeyMaterial::InMemoryPem`].
-/// Le branchement Keystore (signing callback) arrive en phase C — il passera
-/// par `ClientConfig::with_client_cert_resolver`.
+/// Supports [`PrivateKeyMaterial::InMemoryPem`] (key in RAM) and
+/// [`PrivateKeyMaterial::Keystore`], where signing is delegated to a callback
+/// through `ClientConfig::with_client_cert_resolver`.
 pub fn build_client_config(cfg: &ProxyConfig) -> Result<Arc<ClientConfig>> {
     let root_store = build_root_store(&cfg.server_trust)?;
 
-    // On force le verifier WebPKI sur ce root store : pas de hostname-validation
-    // skip, pas d'ALPN custom. SNI = cfg.sni ou upstream_host (géré au connect).
+    // Force the WebPKI verifier on this root store: no skipped hostname
+    // validation, no custom ALPN. SNI = cfg.sni or upstream_host (handled at connect).
     let verifier = WebPkiServerVerifier::builder(Arc::new(root_store))
         .build()
         .map_err(|e| CoreError::Tls(format!("verifier build: {e}")))?;
 
     let builder = ClientConfig::builder()
-        .dangerous() // nécessaire pour with_custom_certificate_verifier ; on lui
-        // passe WebPkiServerVerifier qui est strict, donc pas réellement dangereux.
+        .dangerous() // required for with_custom_certificate_verifier; it is given
+        // WebPkiServerVerifier, which is strict, so this is not actually dangerous.
         .with_custom_certificate_verifier(verifier);
 
     let config = match &cfg.identity.key {
@@ -45,7 +45,7 @@ pub fn build_client_config(cfg: &ProxyConfig) -> Result<Arc<ClientConfig>> {
                 crate::runtime::blocking(|| signer.supported_schemes(handle.clone()));
             if supported_our.is_empty() {
                 return Err(CoreError::Config(
-                    "le KeystoreSigner ne déclare aucun schéma supporté".into(),
+                    "the KeystoreSigner declares no supported scheme".into(),
                 ));
             }
             let supported: Vec<_> = supported_our
@@ -75,8 +75,8 @@ pub fn build_client_config(cfg: &ProxyConfig) -> Result<Arc<ClientConfig>> {
 
 fn infer_algorithm(schemes: &[TlsSignatureScheme]) -> SignatureAlgorithm {
     use TlsSignatureScheme::*;
-    // Les schémas exposés par une même clé sont homogènes (EC ou RSA), donc
-    // on regarde juste le premier.
+    // The schemes exposed by a single key are homogeneous (EC or RSA), so
+    // looking at the first one is enough.
     match schemes.first() {
         Some(EcdsaNistp256Sha256) | Some(EcdsaNistp384Sha384) => SignatureAlgorithm::ECDSA,
         _ => SignatureAlgorithm::RSA,
@@ -96,7 +96,7 @@ fn build_root_store(trust: &ServerTrust) -> Result<RootCertStore> {
         }
         ServerTrust::SystemRoots => {
             return Err(CoreError::Config(
-                "SystemRoots non implémenté ; épingle une CA explicitement".into(),
+                "SystemRoots is not implemented; pin a CA explicitly".into(),
             ));
         }
     }
@@ -114,5 +114,5 @@ fn parse_private_key(pem: &[u8]) -> Result<PrivateKeyDer<'static>> {
     let mut cursor = Cursor::new(pem);
     rustls_pemfile::private_key(&mut cursor)
         .map_err(|e| CoreError::Pem(format!("private_key: {e}")))?
-        .ok_or_else(|| CoreError::Pem("aucune clé privée trouvée".into()))
+        .ok_or_else(|| CoreError::Pem("no private key found".into()))
 }

@@ -1,8 +1,8 @@
-//! Wrappers exposés à uniffi pour orchestrer les deux modes depuis Kotlin.
+//! Wrappers exported through uniffi to drive both modes from Kotlin.
 //!
-//! Les types internes (`ProxyConfig`, `Arc<dyn KeystoreSigner>`) ne sont pas
-//! `uniffi::Record`-compatibles ; on les construit ici à partir de structs
-//! plates passées depuis l'hôte Android.
+//! The internal types (`ProxyConfig`, `Arc<dyn KeystoreSigner>`) are not
+//! `uniffi::Record`-compatible; they are built here from flat structs passed
+//! in by the Android host.
 
 use std::sync::Arc;
 
@@ -20,10 +20,10 @@ pub struct ProxyConfigSpec {
     pub cert_chain_pem: Vec<u8>,
     pub ca_pem: Vec<u8>,
     pub keystore_alias: String,
-    /// Loopback uniquement. Token URL-safe inséré dans le path HTTP.
+    /// Loopback only. URL-safe token inserted in the HTTP path.
     pub path_token: Option<String>,
-    /// Hosts canoniques additionnels (sans scheme) à réécrire vers le
-    /// loopback. Voir [`ProxyConfig::extra_canonical_hosts`].
+    /// Additional canonical hosts (without scheme) to rewrite to the
+    /// loopback address. See [`ProxyConfig::extra_canonical_hosts`].
     pub extra_canonical_hosts: Vec<String>,
 }
 
@@ -56,8 +56,8 @@ pub async fn start_loopback_proxy(
     audit: Arc<dyn AuditLogger>,
 ) -> Result<Arc<LoopbackHandle>> {
     let cfg = build_proxy_config(config, signer);
-    // Sur le runtime multi-thread des proxys, pas sur celui d'async-compat
-    // (mono-thread) : cf. crate::runtime.
+    // On the multi-threaded proxy runtime, not on the (single-threaded)
+    // async-compat one: see crate::runtime.
     crate::runtime::run(start_loopback(
         cfg,
         bind_port,
@@ -75,9 +75,9 @@ pub async fn start_loopback_proxy(
 pub struct VpnRouteSpec {
     pub synthetic_ip: String,
     pub synthetic_port: u16,
-    /// UID Android de l'app cible (PackageManager.getApplicationInfo(pkg).uid).
-    /// Vérifié à chaque accept côté Rust en défense en profondeur — pour qu'une
-    /// app autorisée ne puisse pas viser l'IP synthétique d'une autre.
+    /// Android UID of the target app (PackageManager.getApplicationInfo(pkg).uid).
+    /// Checked on every accept on the Rust side as defense in depth, so that an
+    /// authorized app cannot target the synthetic IP of another one.
     pub expected_uid: u32,
     pub config: ProxyConfigSpec,
 }
@@ -98,7 +98,7 @@ pub async fn start_vpn_proxy(
             let ip = r
                 .synthetic_ip
                 .parse()
-                .map_err(|e| crate::error::CoreError::Config(format!("ip synth: {e}")))?;
+                .map_err(|e| crate::error::CoreError::Config(format!("synthetic ip: {e}")))?;
             Ok::<_, crate::error::CoreError>(crate::vpn::VpnRoute {
                 synthetic_ip: ip,
                 synthetic_port: r.synthetic_port,

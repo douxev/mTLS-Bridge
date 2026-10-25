@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,27 +8,29 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+  <!-- Static texts are in English; app.js replaces every data-i18n /
+       data-i18n-placeholder element with the selected language at boot. -->
   <header class="topbar">
     <div class="brand">
-      <span class="logo" aria-hidden="true">🔒</span>
+      <span class="logo" aria-hidden="true"></span>
       <div>
         <div class="brand-name">mTLS Bridge</div>
-        <div class="brand-sub" id="device-line">Console de configuration</div>
+        <div class="brand-sub" id="device-line" data-i18n="brand.sub">Configuration console</div>
       </div>
     </div>
-    <button type="button" class="ghost" id="logout-btn" hidden>Se déconnecter</button>
+    <button type="button" class="ghost" id="logout-btn" data-i18n="logout" hidden>Sign out</button>
   </header>
 
   <main>
-    <!-- Appairage -->
+    <!-- Pairing -->
     <section id="pair-view" class="panel narrow" hidden>
-      <h1>Connexion à l'appareil</h1>
-      <p>Saisis le PIN à 6 chiffres affiché sur l'écran « Configuration à distance » de l'appareil.</p>
+      <h1 data-i18n="pair.title">Connect to the device</h1>
+      <p data-i18n="pair.help">Enter the 6-digit PIN shown on the device's "Remote configuration" screen.</p>
       <form id="pair-form" autocomplete="off">
-        <label for="pin-input">PIN</label>
+        <label for="pin-input" data-i18n="pair.pin">PIN</label>
         <input id="pin-input" name="pin" inputmode="numeric" autocomplete="one-time-code"
                pattern="[0-9 ]{6,7}" maxlength="7" required placeholder="123 456">
-        <button type="submit" class="primary">Se connecter</button>
+        <button type="submit" class="primary" data-i18n="pair.submit">Connect</button>
         <p class="error" id="pair-error" role="alert"></p>
       </form>
     </section>
@@ -36,158 +38,169 @@
     <!-- Console -->
     <section id="main-view" hidden>
       <div class="toolbar">
-        <h1>Configurations</h1>
+        <h1 data-i18n="main.title">Configurations</h1>
         <div class="actions">
-          <button type="button" class="primary" id="new-config-btn">Nouvelle config</button>
-          <button type="button" id="import-bundle-btn">Importer un bundle</button>
-          <button type="button" id="export-btn">Exporter</button>
+          <button type="button" class="primary" id="new-config-btn" data-i18n="main.newConfig">New config</button>
+          <button type="button" id="import-bundle-btn" data-i18n="main.importBundle">Import a bundle</button>
+          <button type="button" id="export-btn" data-i18n="main.export">Export</button>
         </div>
       </div>
       <p class="notice" id="notice" role="status" hidden></p>
 
       <div class="panel vpn" id="vpn-panel" hidden>
         <div>
-          <strong id="vpn-title">Tunnel VPN</strong>
+          <strong id="vpn-title" data-i18n="vpn.title">VPN tunnel</strong>
           <div class="muted" id="vpn-sub"></div>
         </div>
         <button type="button" id="vpn-toggle"></button>
       </div>
 
       <div id="config-list" class="cards"></div>
-      <p class="empty muted" id="empty-state" hidden>
-        Aucune configuration pour l'instant. Crée-en une ou importe un bundle de déploiement.
+      <p class="empty muted" id="empty-state" data-i18n="main.empty" hidden>
+        No configuration yet. Create one or import a deployment bundle.
       </p>
     </section>
   </main>
 
-  <!-- Création / édition -->
+  <!-- Create / edit -->
   <dialog id="config-dialog">
     <form id="config-form" class="dialog-form" novalidate>
-      <h2 id="config-dialog-title">Nouvelle config</h2>
+      <h2 id="config-dialog-title" data-i18n="main.newConfig">New config</h2>
 
-      <label for="f-displayName">Nom</label>
+      <label for="f-displayName" data-i18n="form.name">Name</label>
       <input id="f-displayName" name="displayName" required placeholder="Jellyfin, Nextcloud…">
 
-      <label for="f-targetPackage">App cliente</label>
+      <label for="f-targetPackage" data-i18n="form.clientApp">Client app</label>
       <select id="f-targetPackage" name="targetPackage" required></select>
-      <input id="f-targetPackageOther" name="targetPackageOther" placeholder="org.exemple.app" hidden>
+      <input id="f-targetPackageOther" name="targetPackageOther" placeholder="org.example.app"
+             data-i18n-placeholder="form.otherPackagePlaceholder" hidden>
 
       <div class="row">
         <div class="grow">
-          <label for="f-upstreamHost">Hôte upstream</label>
-          <input id="f-upstreamHost" name="upstreamHost" required placeholder="media.exemple.com">
+          <label for="f-upstreamHost" data-i18n="form.upstreamHost">Upstream host</label>
+          <input id="f-upstreamHost" name="upstreamHost" required placeholder="media.example.com"
+                 data-i18n-placeholder="form.upstreamHostPlaceholder">
         </div>
         <div class="port">
-          <label for="f-upstreamPort">Port</label>
+          <label for="f-upstreamPort" data-i18n="form.port">Port</label>
           <input id="f-upstreamPort" name="upstreamPort" type="number" min="1" max="65535" value="443">
         </div>
       </div>
 
-      <label for="f-sni">SNI (optionnel)</label>
-      <input id="f-sni" name="sni" placeholder="par défaut : l'hôte upstream">
+      <label for="f-sni" data-i18n="form.sni">SNI (optional)</label>
+      <input id="f-sni" name="sni" placeholder="default: the upstream host"
+             data-i18n-placeholder="form.sniPlaceholder">
 
       <fieldset class="modes">
-        <legend>Mode</legend>
-        <label class="inline"><input type="radio" name="mode" value="LOOPBACK" checked> Loopback (recommandé)</label>
-        <label class="inline"><input type="radio" name="mode" value="VPN"> VPN</label>
+        <legend data-i18n="form.mode">Mode</legend>
+        <label class="inline"><input type="radio" name="mode" value="LOOPBACK" checked>
+          <span data-i18n="form.modeLoopback">Loopback (recommended)</span></label>
+        <label class="inline"><input type="radio" name="mode" value="VPN">
+          <span data-i18n="form.modeVpn">VPN</span></label>
       </fieldset>
 
       <div id="loopback-fields">
-        <label for="f-loopbackPort">Port loopback</label>
+        <label for="f-loopbackPort" data-i18n="form.loopbackPort">Loopback port</label>
         <input id="f-loopbackPort" name="loopbackPort" type="number" min="1" max="65535">
         <label class="inline">
           <input type="checkbox" id="f-pathTokenEnabled" name="pathTokenEnabled" checked>
-          Token d'isolation dans l'URL (recommandé, webviews comprises)
+          <span data-i18n="form.pathToken">Isolation token in the URL (recommended, webviews included)</span>
         </label>
-        <label for="f-extraCanonicalHosts">Hôtes canoniques additionnels (optionnel)</label>
+        <label for="f-extraCanonicalHosts" data-i18n="form.extraHosts">Additional canonical hosts (optional)</label>
         <input id="f-extraCanonicalHosts" name="extraCanonicalHosts"
-               placeholder="autre.exemple.com, cdn.exemple.com">
+               placeholder="other.example.com, cdn.example.com"
+               data-i18n-placeholder="form.extraHostsPlaceholder">
         <label class="inline" id="regen-token-row" hidden>
           <input type="checkbox" id="f-regenerateToken" name="regenerateToken">
-          Générer un nouveau token
+          <span data-i18n="form.regenerateToken">Generate a new token</span>
         </label>
       </div>
 
       <div id="vpn-fields" hidden>
         <div class="row">
           <div class="grow">
-            <label for="f-syntheticIp">IP synthétique</label>
+            <label for="f-syntheticIp" data-i18n="form.syntheticIp">Synthetic IP</label>
             <input id="f-syntheticIp" name="syntheticIp" placeholder="192.0.2.1">
           </div>
           <div class="port">
-            <label for="f-syntheticPort">Port</label>
+            <label for="f-syntheticPort" data-i18n="form.port">Port</label>
             <input id="f-syntheticPort" name="syntheticPort" type="number" min="1" max="65535">
           </div>
         </div>
       </div>
 
       <div id="file-fields">
-        <label for="f-p12">Certificat client (.p12 / .pfx)</label>
+        <label for="f-p12" data-i18n="form.p12">Client certificate (.p12 / .pfx)</label>
         <input id="f-p12" name="p12" type="file" accept=".p12,.pfx,application/x-pkcs12">
-        <label for="f-p12Passphrase">Passphrase du .p12</label>
+        <label for="f-p12Passphrase" data-i18n="form.p12Passphrase">.p12 passphrase</label>
         <input id="f-p12Passphrase" name="p12Passphrase" type="password" autocomplete="off">
-        <label for="f-ca">CA upstream épinglée (.pem / .crt)</label>
+        <label for="f-ca" data-i18n="form.ca">Pinned upstream CA (.pem / .crt)</label>
         <input id="f-ca" name="ca" type="file" accept=".pem,.crt,.cer,application/x-x509-ca-cert">
       </div>
 
       <p class="error" id="config-error" role="alert"></p>
       <div class="dialog-actions">
-        <button type="button" class="ghost" data-close>Annuler</button>
-        <button type="submit" class="primary" id="config-submit">Enregistrer</button>
+        <button type="button" class="ghost" data-close data-i18n="common.cancel">Cancel</button>
+        <button type="submit" class="primary" id="config-submit" data-i18n="common.save">Save</button>
       </div>
     </form>
   </dialog>
 
-  <!-- Import de bundle -->
+  <!-- Bundle import -->
   <dialog id="bundle-dialog">
     <form id="bundle-form" class="dialog-form" novalidate>
-      <h2>Importer un bundle</h2>
-      <p class="muted">Archive .zip générée par l'export de l'app ou par <code>bundle-generator.sh</code>.</p>
-      <label for="b-zip">Fichier .zip</label>
+      <h2 data-i18n="bundle.title">Import a bundle</h2>
+      <p class="muted"><span data-i18n="bundle.hint">A .zip archive produced by the app's export or by</span>
+        <code>bundle-generator.sh</code>.</p>
+      <label for="b-zip" data-i18n="bundle.file">.zip file</label>
       <input id="b-zip" type="file" accept=".zip,application/zip">
       <p id="bundle-preview" class="muted"></p>
       <div id="bundle-pass-row" hidden>
-        <label for="b-pass">Passphrase des .p12 du bundle</label>
+        <label for="b-pass" data-i18n="bundle.passphrase">Passphrase of the bundle's .p12 files</label>
         <input id="b-pass" type="password" autocomplete="off">
       </div>
       <p class="error" id="bundle-error" role="alert"></p>
       <div class="dialog-actions">
-        <button type="button" class="ghost" data-close>Annuler</button>
-        <button type="submit" class="primary" id="bundle-submit" disabled>Importer</button>
+        <button type="button" class="ghost" data-close data-i18n="common.cancel">Cancel</button>
+        <button type="submit" class="primary" id="bundle-submit" data-i18n="bundle.submit" disabled>Import</button>
       </div>
     </form>
   </dialog>
 
-  <!-- Ré-import de clé -->
+  <!-- Key re-import -->
   <dialog id="key-dialog">
     <form id="key-form" class="dialog-form" novalidate>
-      <h2 id="key-dialog-title">Fournir le .p12</h2>
-      <p class="muted">Le certificat du .p12 doit correspondre à celui de la config.</p>
-      <label for="k-p12">Fichier .p12 / .pfx</label>
+      <h2 id="key-dialog-title" data-i18n="key.title">Provide the .p12</h2>
+      <p class="muted" data-i18n="key.hint">The certificate in the .p12 must match the one of the config.</p>
+      <label for="k-p12" data-i18n="key.file">.p12 / .pfx file</label>
       <input id="k-p12" type="file" accept=".p12,.pfx,application/x-pkcs12">
-      <label for="k-pass">Passphrase</label>
+      <label for="k-pass" data-i18n="key.passphrase">Passphrase</label>
       <input id="k-pass" type="password" autocomplete="off">
       <p class="error" id="key-error" role="alert"></p>
       <div class="dialog-actions">
-        <button type="button" class="ghost" data-close>Annuler</button>
-        <button type="submit" class="primary">Importer la clé</button>
+        <button type="button" class="ghost" data-close data-i18n="common.cancel">Cancel</button>
+        <button type="submit" class="primary" data-i18n="key.submit">Import the key</button>
       </div>
     </form>
   </dialog>
 
-  <!-- Événements -->
+  <!-- Events -->
   <dialog id="events-dialog" class="wide">
     <div class="dialog-form">
-      <h2 id="events-title">Événements</h2>
+      <h2 id="events-title" data-i18n="events.title">Events</h2>
       <div class="events-wrap">
         <table class="events">
-          <thead><tr><th>Heure</th><th>Type</th><th>Détails</th></tr></thead>
+          <thead><tr>
+            <th data-i18n="events.time">Time</th>
+            <th data-i18n="events.type">Type</th>
+            <th data-i18n="events.details">Details</th>
+          </tr></thead>
           <tbody id="events-body"></tbody>
         </table>
       </div>
       <div class="dialog-actions">
-        <button type="button" id="events-refresh">Rafraîchir</button>
-        <button type="button" class="primary" data-close>Fermer</button>
+        <button type="button" id="events-refresh" data-i18n="events.refresh">Refresh</button>
+        <button type="button" class="primary" data-close data-i18n="common.close">Close</button>
       </div>
     </div>
   </dialog>
@@ -195,12 +208,12 @@
   <!-- Export -->
   <dialog id="export-dialog">
     <form id="export-form" class="dialog-form" novalidate>
-      <h2>Exporter les configs</h2>
-      <p class="muted">Certificats publics et métadonnées uniquement : les clés privées restent dans le Keystore de l'appareil.</p>
+      <h2 data-i18n="export.title">Export configs</h2>
+      <p class="muted" data-i18n="export.hint">Public certificates and metadata only: private keys stay in the device Keystore.</p>
       <div id="export-list" class="checklist"></div>
       <div class="dialog-actions">
-        <button type="button" class="ghost" data-close>Annuler</button>
-        <button type="submit" class="primary">Télécharger le .zip</button>
+        <button type="button" class="ghost" data-close data-i18n="common.cancel">Cancel</button>
+        <button type="submit" class="primary" data-i18n="export.submit">Download the .zip</button>
       </div>
     </form>
   </dialog>

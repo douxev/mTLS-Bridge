@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Commun -->
+    <string name="common_cancel">Annuler</string>
+    <string name="common_delete">Supprimer</string>
+    <string name="common_edit">Modifier</string>
+    <string name="common_import">Importer</string>
+    <string name="common_back">Retour</string>
+    <string name="common_passphrase">Passphrase</string>
+    <string name="common_badge_software">Software</string>
+    <string name="common_badge_unknown">\?</string>
+    <string name="common_mode_vpn">VPN</string>
+    <string name="common_mode_loopback">Loopback</string>
+    <string name="common_no_file_picker">Aucun sélecteur de fichiers sur cet appareil : utilise « Configuration à distance » depuis un ordinateur ou un smartphone.</string>
+    <string name="common_local_network_denied">Accès au réseau local refusé : le proxy ne pourra pas joindre un backend du LAN. Réglages → Applis → mTLS Bridge → Appareils à proximité.</string>
+    <string name="common_label_upstream_host">Hôte upstream</string>
+    <string name="common_label_port">Port</string>
+    <string name="common_label_sni">SNI (optionnel)</string>
+    <string name="common_label_loopback_port">Port loopback (0 = éphémère)</string>
+    <string name="common_label_client_app">App cliente</string>
+    <string name="common_choose_target_app">Choisir l\'app cible</string>
+    <string name="common_path_token_title">Token d\'isolation dans l\'URL</string>
+    <string name="common_regenerate">Régénérer</string>
+    <string name="common_label_p12_passphrase">Passphrase du .p12</string>
+
+    <!-- Liste des configs -->
+    <string name="list_title">Configurations mTLS</string>
+    <string name="list_menu_more">Plus</string>
+    <string name="list_menu_export">Exporter…</string>
+    <string name="list_menu_import">Importer…</string>
+    <string name="list_menu_delete_after_import">Supprimer le fichier après import</string>
+    <string name="list_menu_remote">Configuration à distance…</string>
+    <string name="list_menu_help">Aide &amp; déploiement</string>
+    <string name="list_fab_new">Nouvelle config</string>
+    <string name="list_export_selection_lost">Sélection perdue, relance l\'export</string>
+    <string name="list_export_done">%1$d ko exportés</string>
+    <string name="list_export_failed">Export échoué : %1$s</string>
+    <string name="list_import_failed">Import échoué : %1$s</string>
+    <plurals name="list_import_ready">
+        <item quantity="one">%d prête à l\'emploi</item>
+        <item quantity="many">%d prêtes à l\'emploi</item>
+        <item quantity="other">%d prêtes à l\'emploi</item>
+    </plurals>
+    <plurals name="list_import_without_key">
+        <item quantity="one">%d sans clé</item>
+        <item quantity="many">%d sans clé</item>
+        <item quantity="other">%d sans clé</item>
+    </plurals>
+    <plurals name="list_import_skipped">
+        <item quantity="one">%d ignorée</item>
+        <item quantity="many">%d ignorées</item>
+        <item quantity="other">%d ignorées</item>
+    </plurals>
+    <string name="list_import_summary_no_key">%1$s, %2$s. Rajoute les .p12 dans le détail de chaque config.</string>
+    <string name="list_import_summary">%1$s, %2$s, %3$s.</string>
+    <string name="list_vpn_active">Tunnel VPN actif</string>
+    <string name="list_vpn_stopped">Tunnel VPN arrêté</string>
+    <plurals name="list_vpn_config_count">
+        <item quantity="one">%d config en mode VPN</item>
+        <item quantity="many">%d configs en mode VPN</item>
+        <item quantity="other">%d configs en mode VPN</item>
+    </plurals>
+    <string name="list_bundle_title">Passphrase du bundle</string>
+    <string name="list_bundle_text">Ce bundle contient des .p12 chiffrés. Saisis la passphrase commune (fournie par ton admin) pour déchiffrer toutes les clés en une fois.</string>
+    <string name="list_delete_title">Supprimer « %1$s » ?</string>
+    <string name="list_delete_text">La clé privée est effacée du Keystore et ne peut pas être récupérée : il faudra réimporter le .p12 d\'origine pour recréer cette config.</string>
+    <string name="list_export_title">Exporter les configs</string>
+    <string name="list_export_text">Coche les configs à inclure dans le zip. Le fichier contient les certs publics + métadonnées, pas la clé privée (qui reste dans le Keystore).</string>
+    <string name="list_export_all">Tout</string>
+    <string name="list_export_none">Aucun</string>
+    <string name="list_export_confirm">Exporter</string>
+    <string name="list_empty_title">Aucune configuration mTLS</string>
+    <string name="list_empty_text">Importe un .p12 pour wrapper une app avec mTLS.</string>
+    <string name="list_empty_remote">Configurer depuis un ordinateur ou un smartphone</string>
+    <string name="list_remote_card_title">Configuration à distance</string>
+    <string name="list_remote_card_text">Ouvre une page web sur le réseau local pour créer et modifier les configs depuis le navigateur d\'un ordinateur ou d\'un smartphone.</string>
+    <string name="list_no_target_app">Aucune app cible : modifier la config</string>
+    <string name="list_missing_key">Clé manquante : réimporter le .p12 (détail)</string>
+
+    <!-- Ajout de config -->
+    <string name="add_title">Nouvelle config</string>
+    <string name="add_tv_card_title">Plus simple depuis un ordinateur</string>
+    <string name="add_tv_card_text">Ouvre la configuration à distance et dépose le .p12 et la CA depuis un navigateur sur le même réseau.</string>
+    <string name="add_label_name">Nom (Jellyfin, Nextcloud…)</string>
+    <string name="add_label_synthetic_ip">IP synthétique (192.0.2.X)</string>
+    <string name="add_vpn_hint">Configure l\'app cible avec %1$s</string>
+    <string name="add_label_p12">Certificat client (.p12)</string>
+    <string name="add_label_ca">CA upstream pinné (.pem)</string>
+    <string name="add_delete_files">Supprimer les fichiers .p12 et .pem après import</string>
+    <string name="add_delete_files_hint">Recommandé : la clé est réimportée dans le Keystore matériel, garder les fichiers en clair sur le filesystem est inutile et risqué.</string>
+    <string name="add_importing">Import en cours…</string>
+    <string name="add_mode_loopback_recommended">Loopback (recommandé)</string>
+    <string name="add_compare_modes">Comparer les modes</string>
+    <string name="add_path_token_text">Recommandé : empêche les autres apps du téléphone d\'utiliser votre certificat via le port loopback. Les apps à base de webview (Jellyfin Android, Nextcloud) fonctionnent : après la première page ouverte avec le token, un cookie de session couvre leurs chemins absolus.</string>
+    <string name="add_extra_hosts_label">Hôtes canoniques additionnels (optionnel)</string>
+    <string name="add_extra_hosts_hint">Autres noms d\'hôte que le serveur écrit dans ses URLs (ex. overwrite.cli.url de Nextcloud), séparés par des virgules. Réécrits vers l\'URL loopback comme l\'hôte upstream.</string>
+    <string name="add_no_file">Aucun fichier</string>
+    <string name="add_error_no_p12">Sélectionne un .p12</string>
+    <string name="add_error_no_ca">Sélectionne un CA pinné</string>
+    <string name="add_error_invalid_upstream_port">Port upstream invalide</string>
+
+    <!-- Modification de config -->
+    <string name="edit_title">Modifier la config</string>
+    <string name="edit_cert_notice">Le certificat et la clé Keystore ne sont pas modifiables ici. Pour faire tourner les certs, supprime puis recrée la config.</string>
+    <string name="edit_label_name">Nom</string>
+    <string name="edit_label_synthetic_ip">IP synthétique</string>
+    <string name="edit_path_token_text">Recommandé : empêche les autres apps du téléphone d\'utiliser votre certificat via le port loopback. Les webviews (Jellyfin Android, Nextcloud) fonctionnent grâce au cookie de session posé par la première page ouverte avec le token. Changer le token invalide l\'URL configurée dans l\'app cible — il faudra la recopier après sauvegarde.</string>
+    <string name="edit_saving">Sauvegarde…</string>
+    <string name="edit_save">Sauvegarder</string>
+    <string name="edit_error_not_found">Config introuvable</string>
+    <string name="edit_error_invalid_port">Port invalide</string>
+
+    <!-- Détail d'une config -->
+    <string name="detail_title_fallback">Config</string>
+    <string name="detail_loading">Chargement…</string>
+    <string name="detail_recent_events">Événements récents</string>
+    <string name="detail_no_events">Aucun événement.</string>
+    <string name="detail_upstream">Upstream : %1$s</string>
+    <string name="detail_sni">SNI : %1$s</string>
+    <string name="detail_client_url_label">URL à configurer dans l\'app cible :</string>
+    <string name="detail_ephemeral_port">Port éphémère, voir BIND_OK dans les events</string>
+    <string name="detail_copy_url">Copier l\'URL</string>
+    <string name="detail_copied">Copié : %1$s</string>
+    <string name="detail_no_target_app">Aucune app cible — modifier la config</string>
+    <string name="detail_open_app">Ouvrir l\'app</string>
+    <string name="detail_config_disabled">Config désactivée — réactive avec le Switch</string>
+    <string name="detail_missing_key_title">Clé Keystore manquante</string>
+    <string name="detail_missing_key_text">Cette config a été importée depuis un fichier. Refournis ton .p12 (et sa passphrase) pour activer le proxy. Le cert et la passphrase ne quittent jamais le device.</string>
+    <string name="detail_choose_p12">Choisir .p12</string>
+    <string name="detail_no_file">aucun fichier</string>
+    <string name="detail_delete_p12_after">Supprimer le .p12 du filesystem après import</string>
+    <string name="detail_error_read_p12">Lecture .p12 impossible</string>
+    <string name="detail_importing">Import…</string>
+    <string name="detail_import_key">Importer la clé</string>
+
+    <!-- Comparaison des modes -->
+    <string name="compare_title">Loopback vs VPN</string>
+    <string name="compare_intro_title">Pourquoi loopback par défaut ?</string>
+    <string name="compare_intro_text">Les deux modes demandent de retaper une URL personnalisée dans l\'app cible (Jellyfin, Nextcloud…). À fonctionnalité équivalente, le mode loopback gagne sur la sécurité et l\'énergie. Le mode VPN n\'est utile que pour une app qui refuserait explicitement une URL en 127.0.0.1.</string>
+    <string name="compare_isolation">Isolation entre apps</string>
+    <string name="compare_isolation_loopback">Forte — un service par config, UID check strict (fail-closed)</string>
+    <string name="compare_isolation_vpn">Faible — les apps partagent le tun, l\'UID check ne fonctionne pas pour les sockets virtuels</string>
+    <string name="compare_battery">Consommation batterie au repos</string>
+    <string name="compare_battery_loopback">≈ 0 — le listener dort sur epoll, démarre à la demande</string>
+    <string name="compare_battery_vpn">Modérée — service permanent, smoltcp parse tout le trafic des apps autorisées</string>
+    <string name="compare_other_vpn">Compatibilité avec une autre VPN</string>
+    <string name="compare_other_vpn_loopback">Oui (WireGuard, Mullvad, etc. fonctionnent en parallèle)</string>
+    <string name="compare_other_vpn_vpn">Non — l\'OS n\'autorise qu\'une VPN active</string>
+    <string name="compare_breaks_traffic">Casse les autres connexions réseau de l\'app</string>
+    <string name="compare_breaks_traffic_loopback">Non — on n\'intercepte que les requêtes vers 127.0.0.1:PORT</string>
+    <string name="compare_breaks_traffic_vpn">Oui — tout le trafic de l\'app passe par le tun, les requêtes vers ses CDN/analytics tombent</string>
+    <string name="compare_client_url">URL à configurer dans l\'app cliente</string>
+    <string name="compare_client_url_loopback">http://127.0.0.1:PORT</string>
+    <string name="compare_client_url_vpn">http://192.0.2.X:PORT (IP synthétique)</string>
+    <string name="compare_activation">Activation</string>
+    <string name="compare_activation_loopback">Toggle on/off par config — reste actif tant que enabled</string>
+    <string name="compare_activation_vpn">Toggle global VPN — toutes les configs VPN en même temps</string>
+    <string name="compare_conclusion_title">Recommandation</string>
+    <string name="compare_conclusion_text">Utilise le loopback (par défaut). Bascule en VPN uniquement si l\'app cible refuse une URL en localhost — c\'est rare en pratique.</string>
+
+    <!-- Aide et déploiement -->
+    <string name="help_title">Aide &amp; déploiement</string>
+    <string name="help_overview_title">Qu\'est-ce que mTLS Bridge ?</string>
+    <string name="help_overview_text">mTLS Bridge est un proxy local mTLS pour Android. Tu pointes ton app (Jellyfin, Nextcloud, Home Assistant…) vers une URL en localhost ; mTLS Bridge intercepte la requête en clair, la chiffre avec ton certificat client, et la relaie vers ton backend self-hosted.</string>
+    <string name="help_overview_key">La clé privée reste dans Android Keystore (TEE matériel quand disponible), non exportable du device.</string>
+    <string name="help_mode_title">Loopback vs VPN</string>
+    <string name="help_mode_text">Deux modes existent. Le loopback (recommandé) est plus sûr et plus économe en batterie : chaque config a son port 127.0.0.1, isolation stricte par UID, démarrage on-demand. Le VPN n\'est utile que pour les apps qui refusent une URL en localhost.</string>
+    <string name="help_compare_details">Comparer en détail</string>
+    <string name="help_android17_title">Android 17 : profils et réseau local</string>
+    <string name="help_android17_profiles">Android 17 bloque le loopback (127.0.0.1) entre profils : l\'app cible doit être dans le même profil que mTLS Bridge. Une app du profil professionnel ou de l\'Espace privé ne peut pas joindre un proxy du profil principal — installe aussi mTLS Bridge dans ce profil et crée la config là-bas.</string>
+    <string name="help_android17_local_network">Si ton serveur est sur le réseau local (192.168.x.x, 10.x.x.x, 100.64.x.x…), Android 17 demande l\'autorisation « Appareils à proximité » (accès au réseau local) avant de démarrer le proxy. Sans elle, les connexions vers ce serveur échouent.</string>
+    <string name="help_import_title">Importer un bundle de déploiement</string>
+    <string name="help_import_intro">Si ton admin t\'a envoyé un fichier .zip mtls-bridge-bundle :</string>
+    <string name="help_import_steps">1. Menu à trois points en haut de la liste → Importer\n2. Sélectionne le .zip\n3. Saisis la passphrase (transmise séparément par ton admin)\n4. Toutes les configs apparaissent, déjà actives\n5. Ouvre ton app (ex. Jellyfin), tape l\'URL affichée sur la card de la config</string>
+    <string name="help_import_tip">Optionnel : coche « %1$s » pour ne pas laisser traîner le bundle sur ton filesystem.</string>
+    <string name="help_admin_title">Générer un bundle (admin IT)</string>
+    <string name="help_admin_text">Pour distribuer mTLS Bridge à des employés sans qu\'ils touchent à openssl : ce script bash génère un .zip prêt à l\'import. L\'employé n\'a qu\'à cliquer dessus.</string>
+    <string name="help_copy_script">Copier</string>
+    <string name="help_admin_footer">Adapte les variables en haut du script (config_id, hôte, CA…). La passphrase aléatoire est imprimée à la fin — transmets-la à l\'employé par un canal séparé (Signal, Matrix, SMS).</string>
+    <string name="help_security_title">Sécurité — résumé</string>
+    <string name="help_security_key">• Clé privée : dans Android Keystore (TEE / StrongBox), non exportable du device. L\'UI affiche le niveau effectivement obtenu (StrongBox / TEE / Software).</string>
+    <string name="help_security_configs">• Configs : stockées chiffrées (SQLCipher AES-256-GCM, passphrase wrappée par une master key AES Keystore).</string>
+    <string name="help_security_isolation">• Isolation : chaque proxy loopback a son UID check fail-closed via ConnectivityManager.getConnectionOwnerUid — aucune autre app ne peut intercepter la session.</string>
+    <string name="help_security_audit">• Audit : tous les événements (bind, accept, reject, bridge…) sont persistés en DB chiffrée et consultables par config. Purge automatique au-delà de 7 jours.</string>
+    <string name="help_script_copied">Script copié</string>
+
+    <!-- Configuration à distance -->
+    <string name="remote_title">Configuration à distance</string>
+    <string name="remote_qr_description">QR code de l\'adresse de la console</string>
+    <string name="remote_scan_hint">Scanne avec le téléphone</string>
+    <string name="remote_local_network_title">Accès au réseau local nécessaire</string>
+    <string name="remote_local_network_text">Android bloque les réponses de l\'app vers les autres appareils du réseau tant que la permission « Appareils à proximité » n\'est pas accordée : la page ne se chargera pas dans le navigateur.</string>
+    <string name="remote_allow">Autoriser</string>
+    <string name="remote_open_settings">Ouvrir les réglages</string>
+    <string name="remote_intro">Ouvre l\'adresse ci-dessous dans le navigateur d\'un ordinateur ou d\'un smartphone connecté au même réseau, puis saisis le PIN. Tu pourras y créer, modifier et activer les configs, déposer le .p12, la CA ou un bundle de déploiement.</string>
+    <string name="remote_starting">Démarrage…</string>
+    <string name="remote_stopped">Console arrêtée.</string>
+    <string name="remote_restart">Relancer la console</string>
+    <string name="remote_address">Adresse</string>
+    <string name="remote_no_address">Aucune adresse réseau locale : connecte l\'appareil au Wi-Fi ou à l\'Ethernet.</string>
+    <string name="remote_pin">PIN d\'appairage</string>
+    <string name="remote_pin_single_use">Usage unique : un nouveau PIN s\'affiche après chaque appairage.</string>
+    <string name="remote_browser_warning_title">Avertissement du navigateur</string>
+    <string name="remote_browser_warning_text">La console utilise un certificat généré sur cet appareil : le navigateur signale une connexion « non privée ». Vérifie que l\'empreinte SHA-256 affichée par le navigateur commence comme celle-ci avant de continuer :</string>
+    <string name="remote_no_browser">Aucun navigateur connecté.</string>
+    <plurals name="remote_browsers_connected">
+        <item quantity="one">%d navigateur connecté.</item>
+        <item quantity="many">%d navigateurs connectés.</item>
+        <item quantity="other">%d navigateurs connectés.</item>
+    </plurals>
+    <string name="remote_last_action">Dernière action : %1$s</string>
+    <string name="remote_disconnect_all">Déconnecter les navigateurs</string>
+    <string name="remote_auto_stop">La console s\'arrête quand tu quittes cet écran, ou après 15 min sans activité.</string>
+</resources>

@@ -1,12 +1,13 @@
-//! Mode "loopback" : on bind un port éphémère sur `127.0.0.1`, et pour chaque
-//! connexion entrante on vérifie l'UID du pair via un callback uniffi
-//! (`ConnectivityManager.getConnectionOwnerUid` côté Android). Toute connexion
-//! dont l'UID ≠ celui de l'app cible enregistrée est droppée + auditée.
+//! "Loopback" mode: an ephemeral port is bound on `127.0.0.1`, and for every
+//! incoming connection the peer UID is checked through a uniffi callback
+//! (`ConnectivityManager.getConnectionOwnerUid` on the Android side). Any
+//! connection whose UID differs from that of the registered target app is
+//! dropped and audited.
 //!
-//! Conception "bind à la demande" : l'orchestration côté Android n'appelle
-//! [`start_loopback`] qu'au moment où l'utilisatrice tape "Lancer Jellyfin".
-//! On ferme dès qu'elle quitte. Fenêtre d'attaque réduite à quelques
-//! millisecondes même si l'UID-check tombe en panne sur un device exotique.
+//! "Bind on demand" design: the Android orchestration only calls
+//! [`start_loopback`] when the user taps "Launch Jellyfin", and the proxy is
+//! closed as soon as they leave. The attack window shrinks to a few
+//! milliseconds even if the UID check breaks on an unusual device.
 
 use std::sync::Arc;
 
@@ -19,17 +20,17 @@ use crate::error::{CoreError, Result};
 use crate::http_rewrite::{PathAuth, ResponseRewrite, TokenRejection};
 use crate::proxy::{bridge_session, precompile_client_config, stop_requested, url_host};
 
-/// Événements d'audit émis par les deux modes (loopback + VPN), persistés
-/// dans la DB chiffrée côté Android et affichés dans l'UI logs.
+/// Audit events emitted by both modes (loopback + VPN), persisted in the
+/// encrypted database on the Android side and shown in the logs UI.
 ///
-/// `config_id` est présent quand l'événement est attribuable à une config
-/// précise — Kotlin route alors vers le log de cette config. Sinon
-/// (événement global comme VpnStarted/Stopped, ou route inconnue), Kotlin
-/// broadcast vers toutes les configs actives.
+/// `config_id` is present when the event can be attributed to a specific
+/// config: Kotlin then routes it to that config's log. Otherwise (a global
+/// event such as VpnStarted/Stopped, or an unknown route), Kotlin broadcasts
+/// it to every active config.
 #[derive(Clone, Debug, uniffi::Enum)]
 pub enum ProxyEvent {
-    // Loopback (toujours per-config, mais on garde un config_id explicite pour
-    // que Kotlin dispatch uniformément avec la VPN). -------------------------
+    // Loopback (always per config, but an explicit config_id is kept so that
+    // Kotlin dispatches the same way as for the VPN). -------------------------
     BindOk {
         config_id: String,
         port: u16,
@@ -47,13 +48,13 @@ pub enum ProxyEvent {
         peer_uid: u32,
         expected_uid: u32,
     },
-    /// La résolution UID a échoué — fail-closed.
+    /// UID resolution failed: fail-closed.
     RejectedUidUnknown {
         config_id: String,
     },
-    /// Requête refusée par le contrôle d'accès (token de path / cookie de
-    /// session) : connexion fermée, upstream non contacté pour la première
-    /// requête. Jamais de token, de cookie ni de chemin dans l'événement.
+    /// Request refused by access control (path token / session cookie): the
+    /// connection is closed and the upstream is not contacted for the first
+    /// request. The event never contains a token, cookie or path.
     RejectedToken {
         config_id: String,
         reason: TokenRejection,
@@ -67,12 +68,12 @@ pub enum ProxyEvent {
         synthetic_ip: String,
         synthetic_port: u16,
     },
-    /// Pas de config_id : la route ne matche aucune config connue.
+    /// No config_id: the route matches no known config.
     VpnRouteMissing {
         synthetic_ip: String,
         synthetic_port: u16,
     },
-    // Communs -----------------------------------------------------------------
+    // Common ------------------------------------------------------------------
     BridgeFailed {
         config_id: String,
         reason: String,
@@ -80,15 +81,15 @@ pub enum ProxyEvent {
     Stopped,
 }
 
-/// Callback fourni par l'hôte Android pour résoudre l'UID propriétaire d'un
-/// socket TCP côté **pair** (l'app cliente).
+/// Callback provided by the Android host to resolve the owner UID of a TCP
+/// socket on the **peer** side (the client app).
 ///
-/// Convention : les paramètres décrivent la connexion **depuis le point de
-/// vue du pair**. `peer_local_*` = adresse locale chez le pair (la source
-/// des paquets qu'on reçoit), `peer_remote_*` = adresse distante chez le
-/// pair (notre listener ou notre IP synthétique). Côté Kotlin :
+/// Convention: the parameters describe the connection **from the peer's
+/// point of view**. `peer_local_*` = local address on the peer (the source of
+/// the packets received here), `peer_remote_*` = remote address on the peer
+/// (our listener or our synthetic IP). On the Kotlin side:
 /// `ConnectivityManager.getConnectionOwnerUid(IPPROTO_TCP, peerLocal, peerRemote)`
-/// sans aucune inversion supplémentaire — d'où le renommage.
+/// with no further swapping, hence the naming.
 #[uniffi::export(with_foreign)]
 pub trait PeerUidResolver: Send + Sync {
     fn peer_uid(
@@ -100,33 +101,33 @@ pub trait PeerUidResolver: Send + Sync {
     ) -> Option<u32>;
 }
 
-/// Callback fourni par l'hôte pour persister les événements d'audit.
+/// Callback provided by the host to persist audit events.
 #[uniffi::export(with_foreign)]
 pub trait AuditLogger: Send + Sync {
     fn record(&self, event: ProxyEvent);
 }
 
-/// Handle vers un proxy loopback en cours d'exécution. Exposé à Kotlin comme
-/// uniffi Object — Kotlin tient une référence et appelle `.stop()` quand le
-/// service ou l'utilisatrice ferme la session.
+/// Handle to a running loopback proxy. Exported to Kotlin as a uniffi Object:
+/// Kotlin holds a reference and calls `.stop()` when the service or the user
+/// closes the session.
 #[derive(uniffi::Object)]
 pub struct LoopbackHandle {
     port: u16,
     stop_tx: watch::Sender<bool>,
-    // On garde le JoinHandle pour pouvoir l'abort en Drop si jamais .stop()
-    // n'a pas été appelé explicitement.
+    // The JoinHandle is kept so it can be aborted in Drop if .stop() was
+    // never called explicitly.
     task: std::sync::Mutex<Option<JoinHandle<()>>>,
 }
 
 #[uniffi::export]
 impl LoopbackHandle {
-    /// Port réellement utilisé (utile quand bind_port=0).
+    /// Port actually in use (useful when bind_port=0).
     pub fn port(&self) -> u16 {
         self.port
     }
 
-    /// Demande l'arrêt : la tâche d'accept s'interrompt et ferme toutes les
-    /// sessions en cours (sockets client et upstream).
+    /// Requests a stop: the accept task stops and closes every ongoing
+    /// session (client and upstream sockets).
     pub fn stop(&self) {
         let _ = self.stop_tx.send(true);
     }
@@ -134,8 +135,8 @@ impl LoopbackHandle {
 
 impl Drop for LoopbackHandle {
     fn drop(&mut self) {
-        // Filet de sécurité : si la doxev a oublié .stop() et que le handle est
-        // GC côté Kotlin, on tue la tâche pour ne pas laisser de listener orphelin.
+        // Safety net: if .stop() was never called and the handle is garbage
+        // collected on the Kotlin side, kill the task so no orphan listener is left.
         let _ = self.stop_tx.send(true);
         if let Ok(mut t) = self.task.lock() {
             if let Some(h) = t.take() {
@@ -145,7 +146,7 @@ impl Drop for LoopbackHandle {
     }
 }
 
-/// Démarre un proxy loopback. `bind_port = 0` ⇒ port éphémère choisi par l'OS.
+/// Starts a loopback proxy. `bind_port = 0` -> ephemeral port chosen by the OS.
 pub async fn start_loopback(
     cfg: Arc<ProxyConfig>,
     bind_port: u16,
@@ -155,8 +156,8 @@ pub async fn start_loopback(
 ) -> Result<Arc<LoopbackHandle>> {
     crate::init_crypto_provider();
     let client_config = precompile_client_config(&cfg)?;
-    // Un seul secret de cookie pour toutes les connexions du proxy, tiré à
-    // chaque démarrage : un redémarrage invalide les cookies déjà posés.
+    // A single cookie secret for every connection of the proxy, drawn at each
+    // start: a restart invalidates the cookies already set.
     let auth = match cfg.path_token.as_deref() {
         Some(token) => Some(Arc::new(PathAuth::new(token, &cfg.id)?)),
         None => None,
@@ -208,14 +209,14 @@ pub async fn start_loopback(
     }))
 }
 
-/// Réécriture de réponse : on rewrite les URLs absolues `https://upstream`
-/// → `http://127.0.0.1:bindport[/token]` dans les Location headers et les
-/// bodies JSON/HTML. Indispensable pour les apps qui font de l'OAuth via
-/// browser externe (Nextcloud Login v2 + Authentik), où le serveur sérialise
-/// son URL canonique dans la réponse.
+/// Response rewriting: absolute URLs `https://upstream` are rewritten to
+/// `http://127.0.0.1:bindport[/token]` in Location headers and in JSON/HTML
+/// bodies. Required for apps that do OAuth through an external browser
+/// (Nextcloud Login v2 + Authentik), where the server serializes its
+/// canonical URL in the response.
 pub(crate) fn loopback_response_rewrite(cfg: &ProxyConfig, port: u16) -> ResponseRewrite {
-    // Le token fait partie de la base : sans lui, les URLs réécrites seraient
-    // refusées (BadToken) quand le client les suit.
+    // The token is part of the base: without it, the rewritten URLs would be
+    // refused (BadToken) when the client follows them.
     let to_url = match cfg.path_token.as_deref() {
         Some(token) if !token.is_empty() => format!("http://127.0.0.1:{port}/{token}"),
         _ => format!("http://127.0.0.1:{port}"),
@@ -226,9 +227,9 @@ pub(crate) fn loopback_response_rewrite(cfg: &ProxyConfig, port: u16) -> Respons
     } else {
         format!("https://{host}:{}", cfg.upstream_port)
     }];
-    // Hosts canoniques additionnels (cas Nextcloud avec `overwrite.cli.url`
-    // pointant sur un autre hostname que celui qu'on connecte, ou
-    // configurations multi-domaines derrière le même reverse-proxy).
+    // Additional canonical hosts (Nextcloud with an `overwrite.cli.url`
+    // pointing to a hostname other than the one connected to, or multi-domain
+    // setups behind the same reverse proxy).
     for h in &cfg.extra_canonical_hosts {
         if !h.is_empty() {
             from_urls.push(format!("https://{h}"));
@@ -249,14 +250,14 @@ async fn accept_loop(
     auth: Option<Arc<PathAuth>>,
     response_rewrite: ResponseRewrite,
 ) {
-    // Sessions en cours : abortées ensemble à l'arrêt (chaque session tient
-    // ses deux sockets dans sa propre tâche, cf. run_http_session).
+    // Ongoing sessions: aborted together on stop (each session holds its two
+    // sockets in its own task, see run_http_session).
     let mut sessions = JoinSet::new();
     loop {
         tokio::select! {
             biased;
             () = stop_requested(&mut stop_rx) => break,
-            // Récolte des sessions terminées, sinon le JoinSet grossit.
+            // Reap finished sessions, otherwise the JoinSet keeps growing.
             Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
             res = listener.accept() => {
                 match res {
@@ -271,21 +272,21 @@ async fn accept_loop(
                                 continue;
                             }
                         };
-                        // Convention "depuis le pair" : son local = notre
-                        // remote (l'app cliente côté loopback), son remote =
-                        // notre local (notre listener 127.0.0.1:port).
+                        // "From the peer" convention: its local = our remote
+                        // (the client app on the loopback side), its remote =
+                        // our local (our 127.0.0.1:port listener).
                         //
-                        // Android restreint getConnectionOwnerUid : sur la
-                        // plupart des devices, l'API retourne INVALID_UID
-                        // pour les sockets que notre app ne route pas
-                        // (notre VPN). On soft-fail : si None, on accepte
-                        // mais on log Accepted{peer_uid=0} pour qu'on voie
-                        // dans l'audit que la résolution UID n'a pas marché.
-                        // Mismatch explicite (Some(uid) != expected) reste
-                        // fail-closed : c'est la signature claire d'attaque.
-                        // L'isolation effective du loopback est donc le token
-                        // de path / cookie de session (cf. PathAuth), vérifié
-                        // avant toute connexion upstream (bridge_session).
+                        // Android restricts getConnectionOwnerUid: on most
+                        // devices, the API returns INVALID_UID for sockets
+                        // that our app does not route (through our VPN). This
+                        // soft-fails: on None, the connection is accepted but
+                        // logged as Accepted{peer_uid=0}, so the audit shows
+                        // that UID resolution did not work. An explicit
+                        // mismatch (Some(uid) != expected) stays fail-closed:
+                        // that is a clear attack signature. The effective
+                        // isolation of the loopback is therefore the path
+                        // token / session cookie (see PathAuth), checked
+                        // before any upstream connection (bridge_session).
                         let uid_opt = crate::runtime::blocking(|| {
                             uid_resolver.peer_uid(
                                 remote.ip().to_string(),
@@ -329,8 +330,8 @@ async fn accept_loop(
                             config_id: cfg.id.clone(),
                             reason: format!("accept: {e}"),
                         });
-                        // Si accept retourne en boucle des erreurs (FD épuisé,
-                        // listener fermé), on temporise pour ne pas saturer le CPU.
+                        // If accept keeps returning errors (FDs exhausted,
+                        // listener closed), back off so as not to saturate the CPU.
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }

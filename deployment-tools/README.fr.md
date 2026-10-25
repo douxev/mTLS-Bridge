@@ -1,13 +1,13 @@
 # mTLS Bridge — outils de déploiement
 
 Outils pour générer des bundles de déploiement
-[mTLS Bridge](https://github.com/<your-org>/mtls-bridge) — distribuer
+[mTLS Bridge](https://github.com/douxev/mTLS-Bridge) — distribuer
 configurations mTLS + certificats clients à des utilisateurs (typiquement
 employés d'une petite structure qui héberge ses propres services
 derrière un reverse proxy Caddy/Nginx/Traefik avec authentification
 mTLS).
 
-[🇬🇧 English version](README.md)
+[English version](README.md)
 
 ## Contenu du repo
 
@@ -21,8 +21,8 @@ mTLS).
 ## Démarrage rapide
 
 ```bash
-git clone https://github.com/<your-org>/mTLS-Bridge-doc.git
-cd mTLS-Bridge-doc
+git clone https://github.com/douxev/mTLS-Bridge.git
+cd mTLS-Bridge/deployment-tools
 
 # Pointer sur ta CA backend (clé privée + cert)
 export BACKEND_CA_CRT=/chemin/vers/backend-ca.crt

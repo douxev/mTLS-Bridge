@@ -8,17 +8,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * HTTP/1.1 minimal pour la console d'administration LAN : une requête par
- * connexion (`Connection: close`), bodies à Content-Length uniquement,
- * limites strictes. Volontairement sans dépendance : la surface exposée au
- * réseau local reste petite et lisible.
+ * Minimal HTTP/1.1 for the LAN admin console: one request per connection
+ * (`Connection: close`), Content-Length bodies only, strict limits.
+ * Deliberately dependency-free: the surface exposed to the local network
+ * stays small and readable.
  */
 internal class HttpRequest(
     val method: String,
-    /** Chemin sans query string, tel que reçu (pas de décodage). */
+    /** Path without the query string, as received (not decoded). */
     val path: String,
     val query: Map<String, String>,
-    /** Noms en minuscules. */
+    /** Lowercase names. */
     val headers: Map<String, String>,
     val body: ByteArray,
 ) {
@@ -30,7 +30,7 @@ internal class HttpRequest(
         return try {
             JSONObject(text)
         } catch (e: Exception) {
-            throw HttpException(400, "JSON invalide")
+            throw HttpException(400, "invalid JSON")
         }
     }
 }
@@ -61,7 +61,7 @@ internal class HttpException(val status: Int, message: String) : Exception(messa
 
 internal object MiniHttp {
     const val MAX_HEADER_BYTES = 16 * 1024
-    /** Un bundle ou un .p12 encodés en base64 dans du JSON : quelques Mo max. */
+    /** A bundle or a .p12 base64-encoded in JSON: a few MB at most. */
     const val MAX_BODY_BYTES = 8 * 1024 * 1024
 
     fun readRequest(input: InputStream): HttpRequest {
@@ -69,26 +69,26 @@ internal object MiniHttp {
         val lines = head.split("\r\n")
         val requestLine = lines.first().split(' ')
         if (requestLine.size != 3 || !requestLine[2].startsWith("HTTP/1.")) {
-            throw HttpException(400, "ligne de requête invalide")
+            throw HttpException(400, "invalid request line")
         }
         val method = requestLine[0].uppercase()
         val target = requestLine[1]
-        if (!target.startsWith("/")) throw HttpException(400, "cible invalide")
+        if (!target.startsWith("/")) throw HttpException(400, "invalid target")
 
         val headers = HashMap<String, String>()
         for (line in lines.drop(1)) {
             if (line.isEmpty()) continue
             val idx = line.indexOf(':')
-            if (idx <= 0) throw HttpException(400, "header invalide")
+            if (idx <= 0) throw HttpException(400, "invalid header")
             headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
         }
         if (headers.containsKey("transfer-encoding")) {
-            throw HttpException(501, "Transfer-Encoding non supporté")
+            throw HttpException(501, "Transfer-Encoding not supported")
         }
         val length = headers["content-length"]?.let {
-            it.toIntOrNull() ?: throw HttpException(400, "Content-Length invalide")
+            it.toIntOrNull() ?: throw HttpException(400, "invalid Content-Length")
         } ?: 0
-        if (length < 0 || length > MAX_BODY_BYTES) throw HttpException(413, "requête trop volumineuse")
+        if (length < 0 || length > MAX_BODY_BYTES) throw HttpException(413, "request too large")
         val body = readExactly(input, length)
 
         val path = target.substringBefore('?')
@@ -114,8 +114,8 @@ internal object MiniHttp {
             "X-Content-Type-Options" to "nosniff",
             "X-Frame-Options" to "DENY",
             "Referrer-Policy" to "no-referrer",
-            // Tout est servi depuis l'appareil : aucun script, style ou image
-            // externe, pas d'iframe.
+            // Everything is served from the device: no external script, style
+            // or image, no iframe.
             "Content-Security-Policy" to "default-src 'self'; img-src 'self' data:; " +
                 "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
         )
@@ -129,12 +129,12 @@ internal object MiniHttp {
 
     private fun readHead(input: InputStream): String {
         val buf = ByteArrayOutputStream(1024)
-        var matched = 0 // progression dans "\r\n\r\n"
+        var matched = 0 // progress through "\r\n\r\n"
         while (true) {
             val b = input.read()
-            if (b < 0) throw HttpException(400, "connexion fermée avant la fin des headers")
+            if (b < 0) throw HttpException(400, "connection closed before the end of the headers")
             buf.write(b)
-            if (buf.size() > MAX_HEADER_BYTES) throw HttpException(431, "headers trop gros")
+            if (buf.size() > MAX_HEADER_BYTES) throw HttpException(431, "headers too large")
             matched = when {
                 b == '\r'.code && (matched == 0 || matched == 2) -> matched + 1
                 b == '\n'.code && (matched == 1 || matched == 3) -> matched + 1
@@ -152,7 +152,7 @@ internal object MiniHttp {
         var off = 0
         while (off < n) {
             val r = input.read(out, off, n - off)
-            if (r < 0) throw HttpException(400, "body incomplet")
+            if (r < 0) throw HttpException(400, "incomplete body")
             off += r
         }
         return out

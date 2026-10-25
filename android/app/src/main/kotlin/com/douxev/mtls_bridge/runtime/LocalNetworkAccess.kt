@@ -13,27 +13,27 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Protection « réseau local » d'Android 17 (API 37) : sans la permission
- * runtime ACCESS_LOCAL_NETWORK, l'app ne peut plus échanger avec une adresse
- * du LAN. La doc la réserve aux apps ciblant 37, mais sur Pixel 9 Pro /
- * Android 17 elle s'applique déjà en targetSdk 36, y compris aux réponses
- * d'un serveur de l'app (console d'administration LAN) : on la demande donc
- * dès que l'OS la connaît. Un backend self-hosted en 192.168.x.x / 10.x.x.x
- * (upstream du proxy) est le même cas.
+ * Android 17 (API 37) "local network" protection: without the
+ * ACCESS_LOCAL_NETWORK runtime permission, the app can no longer exchange
+ * traffic with a LAN address. The docs restrict it to apps targeting 37, but
+ * on Pixel 9 Pro / Android 17 it already applies with targetSdk 36, including
+ * to responses from a server in the app (LAN admin console): so it is
+ * requested as soon as the OS knows about it. A self-hosted backend on
+ * 192.168.x.x / 10.x.x.x (proxy upstream) is the same case.
  *
- * Définition des plages : developer.android.com/privacy-and-security/local-network-definition
- * (RFC 1918, link-local, CGNAT 100.64/10, multicast/broadcast ; ULA IPv6).
+ * Range definitions: developer.android.com/privacy-and-security/local-network-definition
+ * (RFC 1918, link-local, CGNAT 100.64/10, multicast/broadcast; IPv6 ULA).
  */
 object LocalNetworkAccess {
     private const val ACCESS_LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
     private const val API_ANDROID_17 = 37
 
     /**
-     * Permission à demander sur cet OS, ou `null` si aucune n'est exigée.
-     * Android 16 : la restriction n'existe qu'en opt-in de test
-     * (`adb shell am compat enable RESTRICT_LOCAL_NETWORK <pkg>`) et se lève
-     * avec NEARBY_WIFI_DEVICES — déclarée uniquement dans le manifest debug,
-     * pour ne pas imposer un prompt inutile aux builds release.
+     * Permission to request on this OS, or `null` if none is required.
+     * Android 16: the restriction only exists as a test opt-in
+     * (`adb shell am compat enable RESTRICT_LOCAL_NETWORK <pkg>`) and is lifted
+     * with NEARBY_WIFI_DEVICES, declared only in the debug manifest so release
+     * builds do not get a needless prompt.
      */
     fun runtimePermission(): String? = when {
         Build.VERSION.SDK_INT >= API_ANDROID_17 -> ACCESS_LOCAL_NETWORK
@@ -48,22 +48,22 @@ object LocalNetworkAccess {
             PackageManager.PERMISSION_GRANTED
     }
 
-    /** Vrai si au moins un hôte se résout en adresse du réseau local. */
+    /** True if at least one host resolves to a local network address. */
     suspend fun anyResolvesToLocal(hosts: Collection<String>): Boolean =
         withContext(Dispatchers.IO) {
             hosts.map(::bareHost).filter { it.isNotBlank() }.distinct().any { host ->
-                // DNS vers un résolveur local (port 53) reste autorisé par l'OS.
+                // DNS to a local resolver (port 53) is still allowed by the OS.
                 runCatching { InetAddress.getAllByName(host).any(::isLocalAddress) }
                     .getOrDefault(false)
             }
         }
 
-    /** Saisie UI brute ("https://nas.lan:8443/x") → nom résolvable ("nas.lan"). */
+    /** Raw UI input ("https://nas.lan:8443/x") to resolvable name ("nas.lan"). */
     private fun bareHost(input: String): String {
         val h = input.trim().substringAfter("://").substringBefore('/')
         return when {
             h.startsWith("[") -> h.substringAfter('[').substringBefore(']')
-            h.count { it == ':' } > 1 -> h // IPv6 littérale sans crochets
+            h.count { it == ':' } > 1 -> h // IPv6 literal without brackets
             else -> h.substringBefore(':')
         }
     }

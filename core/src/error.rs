@@ -5,17 +5,17 @@ use std::io;
 pub enum CoreError {
     #[error("io: {0}")]
     Io(String),
-    #[error("config invalide: {0}")]
+    #[error("invalid config: {0}")]
     Config(String),
     #[error("tls: {0}")]
     Tls(String),
-    #[error("pkcs#8 / pem invalide: {0}")]
+    #[error("invalid pkcs#8 / pem: {0}")]
     Pem(String),
-    #[error("UID du pair {peer} != UID attendu {expected} pour cette config")]
+    #[error("peer UID {peer} != expected UID {expected} for this config")]
     PeerUidMismatch { peer: u32, expected: u32 },
-    #[error("proxy déjà démarré")]
+    #[error("proxy already running")]
     AlreadyRunning,
-    #[error("interne: {0}")]
+    #[error("internal: {0}")]
     Internal(String),
 }
 

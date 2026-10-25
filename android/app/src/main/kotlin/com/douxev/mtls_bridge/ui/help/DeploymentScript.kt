@@ -1,40 +1,40 @@
 package com.douxev.mtls_bridge.ui.help
 
 /**
- * Script bash exposé tel quel dans l'écran d'aide : version courte de
- * `deployment-tools/bundle-generator.sh` (mode loopback seul), dupliquée
- * depuis `docs/deployment-bundle.md` pour rester self-contained dans l'APK.
- * Quand on touche au format du bundle (ConfigBackup.SCHEMA_VERSION) ou au
- * générateur complet, synchroniser les trois fichiers.
+ * Bash script shown as is in the help screen: a short version of
+ * `deployment-tools/bundle-generator.sh` (loopback mode only), duplicated
+ * from `docs/deployment-bundle.md` so the APK stays self-contained.
+ * When changing the bundle format (ConfigBackup.SCHEMA_VERSION) or the full
+ * generator, keep the three files in sync.
  */
 internal val DEPLOYMENT_SCRIPT_BASH: String = """#!/usr/bin/env bash
-# Bundle generator pour mTLS Bridge — version courte, mode loopback.
-# Version complète (mode VPN, SNI, contrôle des paramètres) :
-# deployment-tools/bundle-generator.sh. Format : docs/deployment-bundle.md
+# Bundle generator for mTLS Bridge: short version, loopback mode.
+# Full version (VPN mode, SNI, parameter validation):
+# deployment-tools/bundle-generator.sh. Format: docs/deployment-bundle.md
 set -euo pipefail
 
-: "${'$'}{USER:=${'$'}(id -un)}"            # absent dans certains conteneurs
+: "${'$'}{USER:=${'$'}(id -un)}"            # missing in some containers
 
-# === À adapter par l'admin =========================
-CONFIG_ID="jellyfin-${'$'}USER"        # [A-Za-z0-9._-] : nom de fichier du zip
+# === To be adapted by the admin ====================
+CONFIG_ID="jellyfin-${'$'}USER"        # [A-Za-z0-9._-]: zip file name
 DISPLAY_NAME="Jellyfin"
 TARGET_PKG="org.jellyfin.mobile"
 UPSTREAM_HOST="media.example.com"
 UPSTREAM_PORT=443
-BACKEND_CA_CRT="backend-ca.crt"   # CA qui signe les certs clients
+BACKEND_CA_CRT="backend-ca.crt"   # CA that signs the client certs
 BACKEND_CA_KEY="backend-ca.key"
 # ===================================================
 
-[[ ${'$'}CONFIG_ID =~ ^[A-Za-z0-9][A-Za-z0-9._-]*${'$'} ]] || { echo "CONFIG_ID invalide" >&2; exit 1; }
+[[ ${'$'}CONFIG_ID =~ ^[A-Za-z0-9][A-Za-z0-9._-]*${'$'} ]] || { echo "invalid CONFIG_ID" >&2; exit 1; }
 [[ ${'$'}UPSTREAM_PORT =~ ^[1-9][0-9]{0,4}${'$'} ]] && (( UPSTREAM_PORT <= 65535 )) \
-  || { echo "UPSTREAM_PORT invalide" >&2; exit 1; }
+  || { echo "invalid UPSTREAM_PORT" >&2; exit 1; }
 
-# Port loopback fixe, tiré dans 10001..32767 comme le fait l'app : l'URL
-# collée dans l'app cible reste valable quand le proxy redémarre.
+# Fixed loopback port, drawn from 10001..32767 like the app does: the URL
+# pasted into the target app stays valid when the proxy restarts.
 LOOPBACK_PORT=${'$'}(( 10001 + ((RANDOM << 15) | RANDOM) % 22767 ))
 
-# Token de path (activé par défaut) : isole le proxy des autres apps du
-# téléphone. 12 caractères, même alphabet que l'app (ni 0/O ni 1/l/I).
+# Path token (enabled by default): isolates the proxy from the other apps on
+# the phone. 12 characters, same alphabet as the app (no 0/O nor 1/l/I).
 gen_path_token() {
   local alphabet='ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
   local out='' b
@@ -48,7 +48,7 @@ gen_path_token() {
 }
 PATH_TOKEN="${'$'}(gen_path_token)"
 
-# Chaîne JSON : guillemets, antislash et caractères de contrôle échappés.
+# JSON string: quotes, backslashes and control characters escaped.
 json_str() {
   local s=${'$'}1 out='' c i
   for (( i = 0; i < ${'$'}{#s}; i++ )); do
@@ -63,13 +63,13 @@ json_str() {
   printf '"%s"' "${'$'}out"
 }
 
-P12_PASSPHRASE="${'$'}(openssl rand -base64 32)"   # à transmettre hors bande
+P12_PASSPHRASE="${'$'}(openssl rand -base64 32)"   # to be sent out of band
 WORK=${'$'}(mktemp -d)
 trap 'rm -rf "${'$'}WORK"' EXIT
-BUNDLE="${'$'}WORK/bundle"                          # contenu du zip, rien d'autre
+BUNDLE="${'$'}WORK/bundle"                          # zip contents, nothing else
 mkdir "${'$'}BUNDLE"
 
-# Clé client + signature par la CA backend
+# Client key + signature by the backend CA
 openssl req -new -newkey rsa:3072 -nodes \
   -keyout "${'$'}WORK/client.key" -out "${'$'}WORK/client.csr" \
   -subj "/CN=${'$'}USER" 2>/dev/null
@@ -78,14 +78,14 @@ openssl x509 -req -in "${'$'}WORK/client.csr" \
   -days 365 -out "${'$'}BUNDLE/${'$'}CONFIG_ID-cert.pem" 2>/dev/null
 cp "${'$'}BACKEND_CA_CRT" "${'$'}BUNDLE/${'$'}CONFIG_ID-ca.pem"
 
-# PKCS#12 : passphrase passée par l'environnement d'openssl seul (env:),
-# jamais en argument (lisible par tous via ps / /proc/<pid>/cmdline).
+# PKCS#12: passphrase passed through openssl's environment only (env:),
+# never as an argument (readable by everyone via ps / /proc/<pid>/cmdline).
 P12_PASSPHRASE="${'$'}P12_PASSPHRASE" openssl pkcs12 -export \
   -in "${'$'}BUNDLE/${'$'}CONFIG_ID-cert.pem" -inkey "${'$'}WORK/client.key" \
   -out "${'$'}BUNDLE/${'$'}CONFIG_ID.p12" -passout env:P12_PASSPHRASE
-rm -f "${'$'}WORK/client.key" "${'$'}WORK/client.csr"   # clé en clair
+rm -f "${'$'}WORK/client.key" "${'$'}WORK/client.csr"   # plaintext key
 
-# Manifest (schéma v2)
+# Manifest (schema v2)
 cat > "${'$'}BUNDLE/configs.json" <<EOF
 {
   "schema": 2,
@@ -111,11 +111,11 @@ cat > "${'$'}BUNDLE/configs.json" <<EOF
 }
 EOF
 
-# Zip final : entrées à la racine, sans uid/gid de la machine de l'admin.
+# Final zip: entries at the root, without the uid/gid of the admin's machine.
 zip -q -j -X "${'$'}WORK/bundle.zip" "${'$'}BUNDLE"/*
 mv -f "${'$'}WORK/bundle.zip" ./mtls-bridge-bundle.zip
 
-echo "Bundle prêt : ./mtls-bridge-bundle.zip"
-echo "Passphrase à transmettre hors bande : ${'$'}P12_PASSPHRASE"
-echo "URL à coller dans l'app cible : http://127.0.0.1:${'$'}LOOPBACK_PORT/${'$'}PATH_TOKEN/"
+echo "Bundle ready: ./mtls-bridge-bundle.zip"
+echo "Passphrase to send out of band: ${'$'}P12_PASSPHRASE"
+echo "URL to paste into the target app: http://127.0.0.1:${'$'}LOOPBACK_PORT/${'$'}PATH_TOKEN/"
 """

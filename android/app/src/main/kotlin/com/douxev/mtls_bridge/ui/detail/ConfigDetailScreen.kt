@@ -41,10 +41,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.data.AuditEventEntity
 import com.douxev.mtls_bridge.data.ConfigEntity
 import com.douxev.mtls_bridge.data.ProxyMode
@@ -71,10 +73,10 @@ fun ConfigDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(config?.displayName ?: "Config") },
+                title = { Text(config?.displayName ?: stringResource(R.string.detail_title_fallback)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
             )
@@ -88,7 +90,7 @@ fun ConfigDetailScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    // Champ passphrase de ReimportKeyCard : réserve le clavier.
+                    // Passphrase field of ReimportKeyCard: reserve the keyboard height.
                     .consumeWindowInsets(padding)
                     .imePadding(),
                 contentPadding = PaddingValues(16.dp),
@@ -102,14 +104,14 @@ fun ConfigDetailScreen(
                 }
                 item {
                     Text(
-                        "Événements récents",
+                        stringResource(R.string.detail_recent_events),
                         style = MaterialTheme.typography.titleSmall,
                     )
                 }
                 if (events.isEmpty()) {
                     item {
                         Text(
-                            "Aucun événement.",
+                            stringResource(R.string.detail_no_events),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodyMedium,
                         )
@@ -131,7 +133,7 @@ private fun LoadingState(padding: PaddingValues) {
             .padding(32.dp),
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("Chargement…")
+        Text(stringResource(R.string.detail_loading))
     }
 }
 
@@ -145,11 +147,11 @@ private fun ConfigSummaryCard(cfg: ConfigEntity) {
         ) {
             Text(cfg.targetPackage, style = MaterialTheme.typography.bodyMedium)
             Text(
-                "Upstream : ${cfg.upstreamHost}:${cfg.upstreamPort}",
+                stringResource(R.string.detail_upstream, "${cfg.upstreamHost}:${cfg.upstreamPort}"),
                 style = MaterialTheme.typography.bodyMedium,
             )
             cfg.sni?.let {
-                Text("SNI : $it", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.detail_sni, it), style = MaterialTheme.typography.bodySmall)
             }
             ClientUrlRow(cfg = cfg, onCopy = { url -> copyToClipboard(context, url) })
             androidx.compose.foundation.layout.Spacer(Modifier.padding(top = 4.dp))
@@ -160,7 +162,7 @@ private fun ConfigSummaryCard(cfg: ConfigEntity) {
 
 @Composable
 private fun ClientUrlRow(cfg: ConfigEntity, onCopy: (String) -> Unit) {
-    // Port 0 = éphémère : le port réel n'est connu qu'au BIND_OK.
+    // Port 0 = ephemeral: the actual port is only known at BIND_OK.
     val url: String? = cfg.clientUrl()
     val isTv = LocalIsTv.current
     androidx.compose.foundation.layout.Row(
@@ -169,22 +171,22 @@ private fun ClientUrlRow(cfg: ConfigEntity, onCopy: (String) -> Unit) {
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                "URL à configurer dans l'app cible :",
+                stringResource(R.string.detail_client_url_label),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                url ?: "— port éphémère, voir BIND_OK dans les events",
-                // Sur TV, l'URL se recopie à la main dans l'app cible : en grand.
+                url ?: stringResource(R.string.detail_ephemeral_port),
+                // On TV the URL is copied by hand into the target app: show it large.
                 style = if (isTv) MaterialTheme.typography.headlineSmall
                 else MaterialTheme.typography.bodyMedium,
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
             )
         }
-        // Pas de presse-papiers utile sur TV (aucune app où coller).
+        // No useful clipboard on TV (no app to paste into).
         if (url != null && !isTv) {
             IconButton(onClick = { onCopy(url) }) {
-                Icon(Icons.Default.ContentCopy, contentDescription = "Copier l'URL")
+                Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.detail_copy_url))
             }
         }
     }
@@ -193,9 +195,9 @@ private fun ClientUrlRow(cfg: ConfigEntity, onCopy: (String) -> Unit) {
 private fun copyToClipboard(context: Context, text: String) {
     val mgr = context.getSystemService(ClipboardManager::class.java)
     mgr.setPrimaryClip(ClipData.newPlainText("mTLS Bridge URL", text))
-    // Sur Android 13+ l'OS affiche son propre toast système, on n'en ajoute pas.
+    // On Android 13+ the OS shows its own system toast, so none is added.
     if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
-        Toast.makeText(context, "Copié : $text", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(R.string.detail_copied, text), Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -205,9 +207,9 @@ private fun LaunchControls(cfg: ConfigEntity) {
     val activity = context as? Activity
     when (cfg.mode) {
         ProxyMode.VPN -> {
-            // En VPN, le tunnel est piloté globalement depuis la liste (toggle
-            // dans l'AppBar). Ici on offre juste un raccourci pour ouvrir l'app
-            // cible une fois le tunnel actif.
+            // In VPN mode the tunnel is controlled globally from the list
+            // (global toggle). Here there is only a shortcut to open the target
+            // app once the tunnel is active.
             Button(
                 onClick = {
                     activity?.let { ProxyLauncher.launchTargetApp(it, cfg.targetPackage) }
@@ -216,15 +218,17 @@ private fun LaunchControls(cfg: ConfigEntity) {
                 enabled = cfg.targetPackage.isNotBlank(),
             ) {
                 Text(
-                    if (cfg.targetPackage.isBlank()) "Aucune app cible — modifier la config"
-                    else "Ouvrir l'app"
+                    stringResource(
+                        if (cfg.targetPackage.isBlank()) R.string.detail_no_target_app
+                        else R.string.detail_open_app
+                    )
                 )
             }
         }
         ProxyMode.LOOPBACK -> {
-            // Le proxy loopback tourne en permanence quand la config est
-            // `enabled` — pilotage via le Switch de la card dans la liste.
-            // Ici on offre juste un raccourci pour ouvrir l'app cible.
+            // The loopback proxy runs permanently while the config is
+            // `enabled`, controlled by the card's switch in the list.
+            // Here there is only a shortcut to open the target app.
             Button(
                 onClick = {
                     activity?.let { ProxyLauncher.launchTargetApp(it, cfg.targetPackage) }
@@ -233,11 +237,13 @@ private fun LaunchControls(cfg: ConfigEntity) {
                 enabled = cfg.targetPackage.isNotBlank() && cfg.enabled,
             ) {
                 Text(
-                    when {
-                        cfg.targetPackage.isBlank() -> "Aucune app cible — modifier la config"
-                        !cfg.enabled -> "Config désactivée — réactive avec le Switch"
-                        else -> "Ouvrir l'app"
-                    }
+                    stringResource(
+                        when {
+                            cfg.targetPackage.isBlank() -> R.string.detail_no_target_app
+                            !cfg.enabled -> R.string.detail_config_disabled
+                            else -> R.string.detail_open_app
+                        }
+                    )
                 )
             }
         }
@@ -264,22 +270,20 @@ private fun ReimportKeyCard(vm: ConfigDetailViewModel) {
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                "Clé Keystore manquante",
+                stringResource(R.string.detail_missing_key_title),
                 style = MaterialTheme.typography.titleMedium,
             )
             Text(
-                "Cette config a été importée depuis un fichier. Re-fournis ton " +
-                    ".p12 (et sa passphrase) pour activer le proxy. Le cert et la " +
-                    "passphrase ne quittent jamais le device.",
+                stringResource(R.string.detail_missing_key_text),
                 style = MaterialTheme.typography.bodyMedium,
             )
             androidx.compose.foundation.layout.Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
             ) {
-                Button(onClick = { pickP12.launchOrExplain(context, "*/*") }) { Text("Choisir .p12") }
+                Button(onClick = { pickP12.launchOrExplain(context, "*/*") }) { Text(stringResource(R.string.detail_choose_p12)) }
                 Text(
-                    p12Uri?.lastPathSegment ?: "aucun fichier",
+                    p12Uri?.lastPathSegment ?: stringResource(R.string.detail_no_file),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )
@@ -287,7 +291,7 @@ private fun ReimportKeyCard(vm: ConfigDetailViewModel) {
             OutlinedTextField(
                 value = passphrase,
                 onValueChange = { passphrase = it },
-                label = { Text("Passphrase du .p12") },
+                label = { Text(stringResource(R.string.common_label_p12_passphrase)) },
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -298,7 +302,7 @@ private fun ReimportKeyCard(vm: ConfigDetailViewModel) {
             ) {
                 Checkbox(checked = deleteAfter, onCheckedChange = { deleteAfter = it })
                 Text(
-                    "Supprimer le .p12 du filesystem après import",
+                    stringResource(R.string.detail_delete_p12_after),
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -310,7 +314,7 @@ private fun ReimportKeyCard(vm: ConfigDetailViewModel) {
                     scope.launch {
                         val bytes = runCatching { SafFileUtils.readBytes(context, uri) }.getOrElse {
                             busy = false
-                            error = "lecture .p12 impossible"
+                            error = context.getString(R.string.detail_error_read_p12)
                             return@launch
                         }
                         error = vm.reimportKey(bytes, passphrase.toCharArray())
@@ -323,7 +327,7 @@ private fun ReimportKeyCard(vm: ConfigDetailViewModel) {
                 },
                 enabled = !busy && p12Uri != null,
                 modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (busy) "Import…" else "Importer la clé") }
+            ) { Text(stringResource(if (busy) R.string.detail_importing else R.string.detail_import_key)) }
         }
     }
 }

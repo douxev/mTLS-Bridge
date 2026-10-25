@@ -10,6 +10,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.douxev.mtls_bridge.BuildConfig
 import com.douxev.mtls_bridge.MtlsApplication
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.data.ConfigRepository
 import com.douxev.mtls_bridge.data.NewConfigRequest
 import com.douxev.mtls_bridge.data.PathTokenGen
@@ -31,31 +32,31 @@ data class AddConfigUiState(
     val upstreamHost: String = "",
     val upstreamPort: String = "443",
     val sni: String = "",
-    // Par défaut loopback : plus sûr (isolation per-config), plus économe
-    // (zero CPU au repos, démarre on-demand), et n'occupe pas le slot VPN
-    // unique du device. Voir l'écran "Comparaison" accessible via ⓘ.
+    // Loopback by default: safer (per-config isolation), lighter (zero CPU
+    // when idle, starts on demand), and does not take the device's single VPN
+    // slot. See the "Comparison" screen reachable through the info button.
     val mode: ProxyMode = ProxyMode.LOOPBACK,
-    // Remplacés au chargement par le premier couple libre (cf. init) : deux
-    // configs VPN sur le même IP:port font échouer toute la VPN.
+    // Replaced on load by the first free pair (see init): two VPN configs
+    // on the same IP:port make the whole VPN fail.
     val syntheticIp: String = "192.0.2.1",
     val syntheticPort: String = SyntheticEndpoints.DEFAULT_PORT.toString(),
-    // Port loopback aléatoire fixe par config (10001..32767) : assez large
-    // (~22k ports) pour quasi pas de collision, évite la plage éphémère OS
-    // (>=32768) pour ne pas être en concurrence avec elle, et les plages
-    // "registered" très utilisées (<10000). La doxev peut éditer si besoin.
+    // Random loopback port, fixed per config (10001..32767): wide enough
+    // (~22k ports) for almost no collisions, avoids the OS ephemeral range
+    // (>=32768) so as not to compete with it, and the heavily used
+    // "registered" ranges (<10000). The user can edit it if needed.
     val loopbackPort: String = (10001..32767).random().toString(),
-    // Token-in-path : seule isolation effective du loopback (le contrôle par
-    // UID y est inopérant) → ON par défaut. Les webviews (Jellyfin Android,
-    // Nextcloud) qui chargent des paths absolus sans le préfixe passent grâce
-    // au cookie de session que le proxy pose sur la première URL avec token.
+    // Token-in-path: the only effective isolation for loopback (UID checks
+    // do not work there), so ON by default. Webviews (Jellyfin Android,
+    // Nextcloud) that load absolute paths without the prefix still work thanks
+    // to the session cookie the proxy sets on the first URL with the token.
     val pathTokenEnabled: Boolean = true,
     val pathToken: String = PathTokenGen.generate(),
-    /** Hôtes canoniques additionnels (loopback), séparés par des virgules. */
+    /** Additional canonical hosts (loopback), comma-separated. */
     val extraCanonicalHosts: String = "",
     val p12Uri: Uri? = null,
     val caUri: Uri? = null,
     val p12Passphrase: String = "",
-    /** Si true, on appellera contentResolver.delete(uri) après l'import. */
+    /** If true, contentResolver.delete(uri) is called after the import. */
     val deleteFilesAfterImport: Boolean = false,
     val installedApps: List<InstalledApp> = emptyList(),
     val submitting: Boolean = false,
@@ -69,9 +70,9 @@ data class InstalledApp(
 )
 
 /**
- * Apps lanceables (téléphone ou Android TV) hors apps système, triées par
- * nom. Lent (labels chargés un par un, des centaines d'apps) : toujours hors
- * du main thread.
+ * Launchable apps (phone or Android TV) excluding system apps, sorted by
+ * name. Slow (labels loaded one by one, hundreds of apps): always off the
+ * main thread.
  */
 internal suspend fun loadLaunchableApps(pm: PackageManager): List<InstalledApp> =
     withContext(Dispatchers.IO) {
@@ -94,7 +95,7 @@ class AddConfigViewModel(
         viewModelScope.launch {
             val (ip, port) = repo.allocateSyntheticEndpoint()
             _state.update {
-                // Ne pas écraser une saisie faite pendant la requête.
+                // Do not overwrite input typed while the request was running.
                 if (it.syntheticIp != "192.0.2.1") it
                 else it.copy(syntheticIp = ip, syntheticPort = port.toString())
             }
@@ -112,11 +113,11 @@ class AddConfigViewModel(
         viewModelScope.launch {
             try {
                 val p12 = s.p12Uri?.let { SafFileUtils.readBytes(app, it) }
-                    ?: error("sélectionne un .p12")
+                    ?: error(app.getString(R.string.add_error_no_p12))
                 val ca = s.caUri?.let { SafFileUtils.readBytes(app, it) }
-                    ?: error("sélectionne un CA pinné")
+                    ?: error(app.getString(R.string.add_error_no_ca))
                 val port = s.upstreamPort.toIntOrNull()
-                    ?: error("port upstream invalide")
+                    ?: error(app.getString(R.string.add_error_invalid_upstream_port))
                 val req = NewConfigRequest(
                     displayName = s.displayName.trim(),
                     targetPackage = s.targetPackage,

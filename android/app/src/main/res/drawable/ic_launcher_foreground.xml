@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Icône d'app provisoire : un cadenas stylisé, vectoriel, mono-couleur.
-     À remplacer par un asset propre quand le branding sera arrêté. -->
+<!-- Placeholder app icon: a stylised, single-colour vector padlock.
+     To be replaced by a proper asset once the branding is settled. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"

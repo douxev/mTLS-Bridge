@@ -1,5 +1,6 @@
 package com.douxev.mtls_bridge.ui.compare
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,51 +26,53 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.douxev.mtls_bridge.R
 
 private data class CompareRow(
-    val criterion: String,
-    val loopback: String,
-    val vpn: String,
+    @StringRes val criterion: Int,
+    @StringRes val loopback: Int,
+    @StringRes val vpn: Int,
     val loopbackWins: Boolean,
 )
 
 private val rows = listOf(
     CompareRow(
-        criterion = "Isolation entre apps",
-        loopback = "Forte — un service par config, UID check strict (fail-closed)",
-        vpn = "Faible — apps partagent le tun, UID check ne fonctionne pas pour les sockets virtuels",
+        criterion = R.string.compare_isolation,
+        loopback = R.string.compare_isolation_loopback,
+        vpn = R.string.compare_isolation_vpn,
         loopbackWins = true,
     ),
     CompareRow(
-        criterion = "Consommation batterie au repos",
-        loopback = "≈ 0 — listener dort sur epoll, démarre à la demande",
-        vpn = "Modérée — service permanent, smoltcp parse tout le trafic des apps autorisées",
+        criterion = R.string.compare_battery,
+        loopback = R.string.compare_battery_loopback,
+        vpn = R.string.compare_battery_vpn,
         loopbackWins = true,
     ),
     CompareRow(
-        criterion = "Compatibilité avec une autre VPN",
-        loopback = "Oui (WireGuard, Mullvad, etc. fonctionnent en parallèle)",
-        vpn = "Non — l'OS n'autorise qu'une VPN active",
+        criterion = R.string.compare_other_vpn,
+        loopback = R.string.compare_other_vpn_loopback,
+        vpn = R.string.compare_other_vpn_vpn,
         loopbackWins = true,
     ),
     CompareRow(
-        criterion = "Casse les autres connexions réseau de l'app",
-        loopback = "Non — on n'intercept que les requêtes vers 127.0.0.1:PORT",
-        vpn = "Oui — tout le trafic de l'app passe par le tun, les requêtes vers ses CDN/analytics tombent",
+        criterion = R.string.compare_breaks_traffic,
+        loopback = R.string.compare_breaks_traffic_loopback,
+        vpn = R.string.compare_breaks_traffic_vpn,
         loopbackWins = true,
     ),
     CompareRow(
-        criterion = "URL à configurer dans l'app cliente",
-        loopback = "http://127.0.0.1:PORT",
-        vpn = "http://192.0.2.X:PORT (IP synthétique)",
-        loopbackWins = false, // équivalent
+        criterion = R.string.compare_client_url,
+        loopback = R.string.compare_client_url_loopback,
+        vpn = R.string.compare_client_url_vpn,
+        loopbackWins = false, // Equivalent.
     ),
     CompareRow(
-        criterion = "Activation",
-        loopback = "Toggle on/off par config — reste actif tant que enabled",
-        vpn = "Toggle global VPN — toutes les configs VPN en même temps",
+        criterion = R.string.compare_activation,
+        loopback = R.string.compare_activation_loopback,
+        vpn = R.string.compare_activation_vpn,
         loopbackWins = false,
     ),
 )
@@ -80,10 +83,10 @@ fun CompareModesScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Loopback vs VPN") },
+                title = { Text(stringResource(R.string.compare_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
             )
@@ -108,16 +111,12 @@ private fun IntroCard() {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                "Pourquoi loopback par défaut ?",
+                stringResource(R.string.compare_intro_title),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "Les deux modes demandent de retaper une URL personnalisée dans " +
-                    "l'app cible (Jellyfin, Nextcloud…). À fonctionnalité équivalente, " +
-                    "le mode loopback gagne sur la sécurité et l'énergie. " +
-                    "Le mode VPN n'est utile que pour une app qui refuserait explicitement " +
-                    "une URL en 127.0.0.1.",
+                stringResource(R.string.compare_intro_text),
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -132,19 +131,19 @@ private fun RowCard(row: CompareRow) {
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                row.criterion,
+                stringResource(row.criterion),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
             )
             ModeLine(
-                label = "Loopback",
-                description = row.loopback,
+                label = stringResource(R.string.common_mode_loopback),
+                description = stringResource(row.loopback),
                 highlighted = row.loopbackWins,
             )
             HorizontalDivider()
             ModeLine(
-                label = "VPN",
-                description = row.vpn,
+                label = stringResource(R.string.common_mode_vpn),
+                description = stringResource(row.vpn),
                 highlighted = false,
             )
         }
@@ -180,13 +179,12 @@ private fun ConclusionCard() {
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(
-                "Recommandation",
+                stringResource(R.string.compare_conclusion_title),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "Utilise le loopback (par défaut). Bascule en VPN uniquement si " +
-                    "l'app cible refuse une URL en localhost — c'est rare en pratique.",
+                stringResource(R.string.compare_conclusion_text),
                 style = MaterialTheme.typography.bodyMedium,
             )
         }

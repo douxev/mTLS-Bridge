@@ -19,21 +19,21 @@ import javax.net.ssl.X509ExtendedKeyManager
 import javax.security.auth.x500.X500Principal
 
 /**
- * TLS de la console d'administration LAN.
+ * TLS for the LAN admin console.
  *
- * Le .p12 et sa passphrase transitent du navigateur vers l'appareil : pas
- * question de les envoyer en clair sur le Wi-Fi. On sert donc en HTTPS avec
- * un certificat auto-signé dont la clé EC P-256 est générée **dans** le
- * Keystore Android (non-exportable). Le navigateur affichera un avertissement
- * (pas d'autorité de certification) : l'écran de l'appareil montre
- * l'empreinte SHA-256 pour que l'utilisatrice puisse la comparer.
+ * The .p12 and its passphrase travel from the browser to the device: sending
+ * them in clear text over Wi-Fi is out of the question. So the console is
+ * served over HTTPS with a self-signed certificate whose EC P-256 key is
+ * generated **inside** the Android Keystore (non-exportable). The browser
+ * will show a warning (no certificate authority): the device screen shows the
+ * SHA-256 fingerprint so the user can compare it.
  */
 internal object RemoteTls {
     private const val ALIAS = "mtls_bridge-remote-admin-tls"
 
     class Material(
         val socketFactory: SSLServerSocketFactory,
-        /** Empreinte SHA-256 du certificat, format `AB:CD:…` (32 octets). */
+        /** SHA-256 fingerprint of the certificate, `AB:CD:...` format (32 bytes). */
         val fingerprint: String,
     )
 
@@ -51,8 +51,8 @@ internal object RemoteTls {
         val now = System.currentTimeMillis()
         val spec = KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_SIGN)
             .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
-            // DIGEST_NONE : Conscrypt délègue la signature TLS en passant un
-            // condensat déjà calculé (NONEwithECDSA).
+            // DIGEST_NONE: Conscrypt delegates the TLS signature by passing an
+            // already computed digest (NONEwithECDSA).
             .setDigests(
                 KeyProperties.DIGEST_NONE,
                 KeyProperties.DIGEST_SHA256,
@@ -75,9 +75,9 @@ internal object RemoteTls {
             .joinToString(":") { "%02X".format(it) }
 
     /**
-     * KeyManager minimal : `KeyManagerFactory` ne sait pas lire les entrées
-     * AndroidKeyStore de façon fiable sur toutes les versions, on renvoie
-     * directement la clé (handle TEE) et le cert.
+     * Minimal KeyManager: `KeyManagerFactory` cannot reliably read
+     * AndroidKeyStore entries on every version, so the key (TEE handle) and
+     * the cert are returned directly.
      */
     private class KeystoreKeyManager(
         private val key: PrivateKey,

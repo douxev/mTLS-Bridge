@@ -1,4 +1,211 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">mTLS Bridge</string>
+    <string name="app_name" translatable="false">mTLS Bridge</string>
+
+    <!-- Common -->
+    <string name="common_cancel">Cancel</string>
+    <string name="common_delete">Delete</string>
+    <string name="common_edit">Edit</string>
+    <string name="common_import">Import</string>
+    <string name="common_back">Back</string>
+    <string name="common_passphrase">Passphrase</string>
+    <string name="common_badge_software">Software</string>
+    <string name="common_badge_unknown">\?</string>
+    <string name="common_mode_vpn">VPN</string>
+    <string name="common_mode_loopback">Loopback</string>
+    <string name="common_no_file_picker">No file picker on this device: use \"Remote configuration\" from a computer or a smartphone.</string>
+    <string name="common_local_network_denied">Local network access denied: the proxy will not be able to reach a backend on the LAN. Settings → Apps → mTLS Bridge → Nearby devices.</string>
+    <string name="common_label_upstream_host">Upstream host</string>
+    <string name="common_label_port">Port</string>
+    <string name="common_label_sni">SNI (optional)</string>
+    <string name="common_label_loopback_port">Loopback port (0 = ephemeral)</string>
+    <string name="common_label_client_app">Client app</string>
+    <string name="common_choose_target_app">Choose the target app</string>
+    <string name="common_path_token_title">Isolation token in the URL</string>
+    <string name="common_regenerate">Regenerate</string>
+    <string name="common_label_p12_passphrase">.p12 passphrase</string>
+
+    <!-- Config list -->
+    <string name="list_title">mTLS configurations</string>
+    <string name="list_menu_more">More options</string>
+    <string name="list_menu_export">Export…</string>
+    <string name="list_menu_import">Import…</string>
+    <string name="list_menu_delete_after_import">Delete file after import</string>
+    <string name="list_menu_remote">Remote configuration…</string>
+    <string name="list_menu_help">Help &amp; deployment</string>
+    <string name="list_fab_new">New config</string>
+    <string name="list_export_selection_lost">Selection lost, start the export again</string>
+    <string name="list_export_done">%1$d KB exported</string>
+    <string name="list_export_failed">Export failed: %1$s</string>
+    <string name="list_import_failed">Import failed: %1$s</string>
+    <plurals name="list_import_ready">
+        <item quantity="one">%d ready to use</item>
+        <item quantity="other">%d ready to use</item>
+    </plurals>
+    <plurals name="list_import_without_key">
+        <item quantity="one">%d without key</item>
+        <item quantity="other">%d without key</item>
+    </plurals>
+    <plurals name="list_import_skipped">
+        <item quantity="one">%d skipped</item>
+        <item quantity="other">%d skipped</item>
+    </plurals>
+    <string name="list_import_summary_no_key">%1$s, %2$s. Add the .p12 files in the details of each config.</string>
+    <string name="list_import_summary">%1$s, %2$s, %3$s.</string>
+    <string name="list_vpn_active">VPN tunnel active</string>
+    <string name="list_vpn_stopped">VPN tunnel stopped</string>
+    <plurals name="list_vpn_config_count">
+        <item quantity="one">%d config in VPN mode</item>
+        <item quantity="other">%d configs in VPN mode</item>
+    </plurals>
+    <string name="list_bundle_title">Bundle passphrase</string>
+    <string name="list_bundle_text">This bundle contains encrypted .p12 files. Enter the shared passphrase (provided by your administrator) to decrypt all keys at once.</string>
+    <string name="list_delete_title">Delete \"%1$s\"?</string>
+    <string name="list_delete_text">The private key is erased from the Keystore and cannot be recovered: the original .p12 must be imported again to recreate this config.</string>
+    <string name="list_export_title">Export configs</string>
+    <string name="list_export_text">Select the configs to include in the zip. The file contains the public certificates and metadata, not the private key (which stays in the Keystore).</string>
+    <string name="list_export_all">All</string>
+    <string name="list_export_none">None</string>
+    <string name="list_export_confirm">Export</string>
+    <string name="list_empty_title">No mTLS configuration</string>
+    <string name="list_empty_text">Import a .p12 to wrap an app with mTLS.</string>
+    <string name="list_empty_remote">Configure from a computer or a smartphone</string>
+    <string name="list_remote_card_title">Remote configuration</string>
+    <string name="list_remote_card_text">Opens a web page on the local network to create and edit configs from the browser of a computer or a smartphone.</string>
+    <string name="list_no_target_app">No target app: edit the config</string>
+    <string name="list_missing_key">Missing key: import the .p12 again (details)</string>
+
+    <!-- Add config -->
+    <string name="add_title">New config</string>
+    <string name="add_tv_card_title">Easier from a computer</string>
+    <string name="add_tv_card_text">Open the remote configuration and drop the .p12 and the CA from a browser on the same network.</string>
+    <string name="add_label_name">Name (Jellyfin, Nextcloud…)</string>
+    <string name="add_label_synthetic_ip">Synthetic IP (192.0.2.X)</string>
+    <string name="add_vpn_hint">Configure the target app with %1$s</string>
+    <string name="add_label_p12">Client certificate (.p12)</string>
+    <string name="add_label_ca">Pinned upstream CA (.pem)</string>
+    <string name="add_delete_files">Delete the .p12 and .pem files after import</string>
+    <string name="add_delete_files_hint">Recommended: the key is imported into the hardware Keystore, so keeping plaintext files on the file system is pointless and risky.</string>
+    <string name="add_importing">Importing…</string>
+    <string name="add_mode_loopback_recommended">Loopback (recommended)</string>
+    <string name="add_compare_modes">Compare modes</string>
+    <string name="add_path_token_text">Recommended: prevents other apps on the phone from using your certificate through the loopback port. Webview-based apps (Jellyfin Android, Nextcloud) work: after the first page opened with the token, a session cookie covers their absolute paths.</string>
+    <string name="add_extra_hosts_label">Additional canonical hosts (optional)</string>
+    <string name="add_extra_hosts_hint">Other host names the server writes in its URLs (e.g. Nextcloud\'s overwrite.cli.url), comma-separated. Rewritten to the loopback URL like the upstream host.</string>
+    <string name="add_no_file">No file</string>
+    <string name="add_error_no_p12">Select a .p12</string>
+    <string name="add_error_no_ca">Select a pinned CA</string>
+    <string name="add_error_invalid_upstream_port">Invalid upstream port</string>
+
+    <!-- Edit config -->
+    <string name="edit_title">Edit config</string>
+    <string name="edit_cert_notice">The certificate and the Keystore key cannot be changed here. To rotate certificates, delete and recreate the config.</string>
+    <string name="edit_label_name">Name</string>
+    <string name="edit_label_synthetic_ip">Synthetic IP</string>
+    <string name="edit_path_token_text">Recommended: prevents other apps on the phone from using your certificate through the loopback port. Webviews (Jellyfin Android, Nextcloud) work thanks to the session cookie set by the first page opened with the token. Changing the token invalidates the URL configured in the target app: copy it again after saving.</string>
+    <string name="edit_saving">Saving…</string>
+    <string name="edit_save">Save</string>
+    <string name="edit_error_not_found">Config not found</string>
+    <string name="edit_error_invalid_port">Invalid port</string>
+
+    <!-- Config details -->
+    <string name="detail_title_fallback">Config</string>
+    <string name="detail_loading">Loading…</string>
+    <string name="detail_recent_events">Recent events</string>
+    <string name="detail_no_events">No events.</string>
+    <string name="detail_upstream">Upstream: %1$s</string>
+    <string name="detail_sni">SNI: %1$s</string>
+    <string name="detail_client_url_label">URL to configure in the target app:</string>
+    <string name="detail_ephemeral_port">Ephemeral port: see BIND_OK in the events</string>
+    <string name="detail_copy_url">Copy URL</string>
+    <string name="detail_copied">Copied: %1$s</string>
+    <string name="detail_no_target_app">No target app: edit the config</string>
+    <string name="detail_open_app">Open the app</string>
+    <string name="detail_config_disabled">Config disabled: turn it back on with the switch</string>
+    <string name="detail_missing_key_title">Missing Keystore key</string>
+    <string name="detail_missing_key_text">This config was imported from a file. Provide your .p12 (and its passphrase) again to enable the proxy. The certificate and the passphrase never leave the device.</string>
+    <string name="detail_choose_p12">Choose .p12</string>
+    <string name="detail_no_file">no file</string>
+    <string name="detail_delete_p12_after">Delete the .p12 from the file system after import</string>
+    <string name="detail_error_read_p12">Cannot read the .p12</string>
+    <string name="detail_importing">Importing…</string>
+    <string name="detail_import_key">Import the key</string>
+
+    <!-- Mode comparison -->
+    <string name="compare_title">Loopback vs VPN</string>
+    <string name="compare_intro_title">Why loopback by default?</string>
+    <string name="compare_intro_text">Both modes require entering a custom URL in the target app (Jellyfin, Nextcloud…). With equivalent features, loopback mode wins on security and energy. VPN mode is only useful for an app that explicitly rejects a 127.0.0.1 URL.</string>
+    <string name="compare_isolation">Isolation between apps</string>
+    <string name="compare_isolation_loopback">Strong: one service per config, strict UID check (fail-closed)</string>
+    <string name="compare_isolation_vpn">Weak: apps share the tun interface, the UID check does not work for virtual sockets</string>
+    <string name="compare_battery">Battery use when idle</string>
+    <string name="compare_battery_loopback">≈ 0: the listener sleeps on epoll and starts on demand</string>
+    <string name="compare_battery_vpn">Moderate: permanent service, smoltcp parses all traffic of the allowed apps</string>
+    <string name="compare_other_vpn">Compatible with another VPN</string>
+    <string name="compare_other_vpn_loopback">Yes (WireGuard, Mullvad, etc. work side by side)</string>
+    <string name="compare_other_vpn_vpn">No: the OS allows only one active VPN</string>
+    <string name="compare_breaks_traffic">Breaks the app\'s other network connections</string>
+    <string name="compare_breaks_traffic_loopback">No: only requests to 127.0.0.1:PORT are intercepted</string>
+    <string name="compare_breaks_traffic_vpn">Yes: all the app\'s traffic goes through the tun interface, requests to its CDNs/analytics fail</string>
+    <string name="compare_client_url">URL to configure in the client app</string>
+    <string name="compare_client_url_loopback">http://127.0.0.1:PORT</string>
+    <string name="compare_client_url_vpn">http://192.0.2.X:PORT (synthetic IP)</string>
+    <string name="compare_activation">Activation</string>
+    <string name="compare_activation_loopback">On/off toggle per config, stays active while enabled</string>
+    <string name="compare_activation_vpn">Global VPN toggle: all VPN configs at once</string>
+    <string name="compare_conclusion_title">Recommendation</string>
+    <string name="compare_conclusion_text">Use loopback (the default). Switch to VPN only if the target app rejects a localhost URL, which is rare in practice.</string>
+
+    <!-- Help and deployment -->
+    <string name="help_title">Help &amp; deployment</string>
+    <string name="help_overview_title">What is mTLS Bridge?</string>
+    <string name="help_overview_text">mTLS Bridge is a local mTLS proxy for Android. Point your app (Jellyfin, Nextcloud, Home Assistant…) to a localhost URL; mTLS Bridge intercepts the plaintext request, encrypts it with your client certificate and relays it to your self-hosted backend.</string>
+    <string name="help_overview_key">The private key stays in the Android Keystore (hardware TEE when available) and cannot be exported from the device.</string>
+    <string name="help_mode_title">Loopback vs VPN</string>
+    <string name="help_mode_text">Two modes are available. Loopback (recommended) is safer and uses less battery: each config has its own 127.0.0.1 port, strict per-UID isolation and on-demand startup. VPN is only useful for apps that reject a localhost URL.</string>
+    <string name="help_compare_details">Compare in detail</string>
+    <string name="help_android17_title">Android 17: profiles and local network</string>
+    <string name="help_android17_profiles">Android 17 blocks loopback (127.0.0.1) traffic between profiles: the target app must be in the same profile as mTLS Bridge. An app in the work profile or in the Private space cannot reach a proxy in the main profile. Install mTLS Bridge in that profile as well and create the config there.</string>
+    <string name="help_android17_local_network">If your server is on the local network (192.168.x.x, 10.x.x.x, 100.64.x.x…), Android 17 asks for the \"Nearby devices\" permission (local network access) before starting the proxy. Without it, connections to that server fail.</string>
+    <string name="help_import_title">Import a deployment bundle</string>
+    <string name="help_import_intro">If your administrator sent you an mtls-bridge-bundle .zip file:</string>
+    <string name="help_import_steps">1. Open the menu (three dots) at the top of the list → Import\n2. Select the .zip\n3. Enter the passphrase (sent separately by your administrator)\n4. All configs appear, already active\n5. Open your app (e.g. Jellyfin) and enter the URL shown on the config card</string>
+    <string name="help_import_tip">Optional: check \"%1$s\" so the bundle is not left lying around on your file system.</string>
+    <string name="help_admin_title">Generate a bundle (IT admin)</string>
+    <string name="help_admin_text">To roll out mTLS Bridge to employees without them touching openssl: this bash script generates a .zip ready to import. The employee only has to tap it.</string>
+    <string name="help_copy_script">Copy</string>
+    <string name="help_admin_footer">Adjust the variables at the top of the script (config_id, host, CA…). The random passphrase is printed at the end: send it to the employee over a separate channel (Signal, Matrix, SMS).</string>
+    <string name="help_security_title">Security summary</string>
+    <string name="help_security_key">• Private key: in the Android Keystore (TEE / StrongBox), cannot be exported from the device. The UI shows the level actually obtained (StrongBox / TEE / Software).</string>
+    <string name="help_security_configs">• Configs: stored encrypted (SQLCipher AES-256-GCM, passphrase wrapped by an AES Keystore master key).</string>
+    <string name="help_security_isolation">• Isolation: each loopback proxy has its own fail-closed UID check through ConnectivityManager.getConnectionOwnerUid, so no other app can intercept the session.</string>
+    <string name="help_security_audit">• Audit: all events (bind, accept, reject, bridge…) are stored in the encrypted database and can be viewed per config. Automatically purged after 7 days.</string>
+    <string name="help_script_copied">Script copied</string>
+
+    <!-- Remote configuration -->
+    <string name="remote_title">Remote configuration</string>
+    <string name="remote_qr_description">QR code of the console address</string>
+    <string name="remote_scan_hint">Scan with your phone</string>
+    <string name="remote_local_network_title">Local network access required</string>
+    <string name="remote_local_network_text">Android blocks the app\'s responses to other devices on the network until the \"Nearby devices\" permission is granted: the page will not load in the browser.</string>
+    <string name="remote_allow">Allow</string>
+    <string name="remote_open_settings">Open settings</string>
+    <string name="remote_intro">Open the address below in the browser of a computer or a smartphone connected to the same network, then enter the PIN. From there you can create, edit and enable configs, and upload the .p12, the CA or a deployment bundle.</string>
+    <string name="remote_starting">Starting…</string>
+    <string name="remote_stopped">Console stopped.</string>
+    <string name="remote_restart">Restart the console</string>
+    <string name="remote_address">Address</string>
+    <string name="remote_no_address">No local network address: connect the device to Wi-Fi or Ethernet.</string>
+    <string name="remote_pin">Pairing PIN</string>
+    <string name="remote_pin_single_use">Single use: a new PIN is shown after each pairing.</string>
+    <string name="remote_browser_warning_title">Browser warning</string>
+    <string name="remote_browser_warning_text">The console uses a certificate generated on this device, so the browser reports a \"not private\" connection. Check that the SHA-256 fingerprint shown by the browser starts like this one before continuing:</string>
+    <string name="remote_no_browser">No browser connected.</string>
+    <plurals name="remote_browsers_connected">
+        <item quantity="one">%d browser connected.</item>
+        <item quantity="other">%d browsers connected.</item>
+    </plurals>
+    <string name="remote_last_action">Last action: %1$s</string>
+    <string name="remote_disconnect_all">Disconnect browsers</string>
+    <string name="remote_auto_stop">The console stops when you leave this screen, or after 15 minutes without activity.</string>
 </resources>

@@ -1,5 +1,5 @@
 [versions]
-# 8.10 = première version d'AGP qui gère compileSdk 36 (Gradle 8.11.1 suffit).
+# 8.10 = first AGP version supporting compileSdk 36 (Gradle 8.11.1 is enough).
 agp = "8.10.1"
 kotlin = "2.1.0"
 composeBom = "2024.12.01"
@@ -14,9 +14,9 @@ securityCrypto = "1.1.0-alpha06"
 roomVersion = "2.6.1"
 sqlcipher = "4.6.1"
 ksp = "2.1.0-1.0.29"
-# ≥ 5.16 : les libjnidispatch.so (dont x86_64) sont alignés sur 16 Ko.
+# >= 5.16: the libjnidispatch.so files (including x86_64) are 16 KB aligned.
 jna = "5.19.1"
-# QR code de la console de configuration à distance (Java pur, pas de lib native).
+# QR code for the remote configuration console (pure Java, no native library).
 zxing = "3.5.3"
 
 [libraries]
@@ -30,8 +30,8 @@ androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
 androidx-compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
 androidx-compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
-# Material3 expressive : on prend l'alpha 1.4 qui contient les composables expressifs
-# (Button shapes morphants, FAB Menu, LoadingIndicator…). Stable visé courant 2026.
+# Material3 expressive: use the 1.4 alpha, which contains the expressive composables
+# (morphing Button shapes, FAB Menu, LoadingIndicator...). Stable expected during 2026.
 androidx-material3 = { group = "androidx.compose.material3", name = "material3", version.ref = "material3" }
 androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }

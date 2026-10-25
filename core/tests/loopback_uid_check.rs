@@ -1,7 +1,7 @@
-//! Vérifie le filtrage UID du mode loopback :
-//! - UID correct → connexion bridgée, réponse upstream reçue.
-//! - UID différent → connexion droppée, événement `RejectedUidMismatch` loggé.
-//! - UID indéterminé → connexion droppée, `RejectedUidUnknown` loggé.
+//! Checks the UID filtering of loopback mode:
+//! - correct UID -> connection bridged, upstream response received.
+//! - different UID -> connection dropped, `RejectedUidMismatch` event logged.
+//! - unknown UID -> connection soft-accepted, `Accepted { peer_uid: 0 }` logged.
 
 use std::sync::{Arc, Mutex};
 
@@ -18,9 +18,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 
-// --- PKI helpers (mêmes que les autres tests, dupliqués volontairement pour
-// que chaque fichier de test reste autonome — le coût d'abstraction d'un
-// module commun n'en vaut pas la peine pour 3 tests). ---
+// --- PKI helpers (same as the other tests, deliberately duplicated so that
+// each test file stays self-contained: a shared module is not worth the
+// abstraction cost for 3 tests). ---
 
 struct Pki {
     ca_pem: Vec<u8>,
@@ -163,7 +163,7 @@ async fn connect_and_read(port: u16) -> Vec<u8> {
     let mut buf = Vec::new();
     tokio::time::timeout(std::time::Duration::from_secs(3), s.read_to_end(&mut buf))
         .await
-        .expect("timeout lecture")
+        .expect("read timeout")
         .unwrap();
     buf
 }
@@ -171,7 +171,7 @@ async fn connect_and_read(port: u16) -> Vec<u8> {
 async fn try_connect_then_eof(port: u16) -> bool {
     let mut s = match TcpStream::connect(("127.0.0.1", port)).await {
         Ok(s) => s,
-        Err(_) => return true, // déjà refusé au connect = succès du drop
+        Err(_) => return true, // already refused at connect = successful drop
     };
     let _ = s.write_all(b"GET /\r\n\r\n").await;
     let _ = s.shutdown().await;
@@ -203,8 +203,8 @@ async fn matching_uid_lets_request_through() -> Result<()> {
     h.stop();
 
     let body = String::from_utf8_lossy(&body);
-    assert!(body.contains("HTTP/1.1 200 OK"), "réponse: {body}");
-    assert!(body.ends_with("loop"), "corps: {body}");
+    assert!(body.contains("HTTP/1.1 200 OK"), "response: {body}");
+    assert!(body.ends_with("loop"), "body: {body}");
 
     let events = audit.0.lock().unwrap().clone();
     assert!(matches!(events[0], ProxyEvent::BindOk { .. }));
@@ -226,12 +226,12 @@ async fn wrong_uid_is_rejected_silently() -> Result<()> {
         cfg,
         0,
         1234,
-        Arc::new(FixedUid(Some(9999))), // pas l'UID attendu
+        Arc::new(FixedUid(Some(9999))), // not the expected UID
         audit.clone() as Arc<dyn AuditLogger>,
     )
     .await?;
     let port = h.port();
-    assert!(try_connect_then_eof(port).await, "le drop n'a pas eu lieu");
+    assert!(try_connect_then_eof(port).await, "the drop did not happen");
     h.stop();
 
     let events = audit.0.lock().unwrap().clone();
@@ -248,10 +248,10 @@ async fn wrong_uid_is_rejected_silently() -> Result<()> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unknown_uid_is_soft_accepted() -> Result<()> {
-    // Android limite getConnectionOwnerUid : sur la plupart des devices il
-    // renvoie INVALID_UID pour les sockets que l'app ne possède pas. Un
-    // fail-closed strict rendait le loopback inutilisable. On accepte donc,
-    // en marquant peer_uid=0 dans l'audit pour signaler le cas.
+    // Android restricts getConnectionOwnerUid: on most devices it returns
+    // INVALID_UID for sockets the app does not own. A strict fail-closed
+    // policy made loopback unusable. The connection is therefore accepted,
+    // with peer_uid=0 in the audit to flag the case.
     init_crypto_provider();
     let pki = build_pki();
     let upstream = spawn_mtls_echo_server(&pki).await;
@@ -271,14 +271,14 @@ async fn unknown_uid_is_soft_accepted() -> Result<()> {
     h.stop();
 
     let body = String::from_utf8_lossy(&body);
-    assert!(body.contains("HTTP/1.1 200 OK"), "réponse: {body}");
+    assert!(body.contains("HTTP/1.1 200 OK"), "response: {body}");
 
     let events = audit.0.lock().unwrap().clone();
     assert!(
         events
             .iter()
             .any(|e| matches!(e, ProxyEvent::Accepted { peer_uid: 0, .. })),
-        "attendu Accepted{{peer_uid=0}} (soft-fail UID inconnu), events={events:?}"
+        "expected Accepted{{peer_uid=0}} (unknown UID soft-fail), events={events:?}"
     );
     Ok(())
 }

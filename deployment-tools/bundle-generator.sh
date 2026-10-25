@@ -1,19 +1,16 @@
 #!/usr/bin/env bash
 # mTLS Bridge bundle generator
-# https://github.com/<your-org>/mtls-bridge-deployment-tools
+# https://github.com/douxev/mTLS-Bridge (deployment-tools/)
 #
-# Génère un fichier mtls-bridge-bundle.zip déployable que l'employé importe
-# en un clic dans l'app mTLS Bridge Android.
-#
-# Generates a mtls-bridge-bundle.zip file that the employee imports with one
-# tap in the mTLS Bridge Android app.
+# Generates a deployable mtls-bridge-bundle.zip file that the employee imports
+# with one tap in the mTLS Bridge Android app.
 
 set -euo pipefail
 
 die() { echo "error: $*" >&2; exit 1; }
 
-# Valeur JSON (RFC 8259) d'une chaîne : guillemets, antislash et caractères de
-# contrôle échappés. Le reste (UTF-8 compris) passe tel quel.
+# JSON (RFC 8259) value of a string: quotes, backslashes and control
+# characters are escaped. Everything else (UTF-8 included) is kept as is.
 json_str() {
   local s=$1 out='' c i
   for (( i = 0; i < ${#s}; i++ )); do
@@ -31,15 +28,15 @@ json_str() {
   printf '"%s"' "$out"
 }
 
-# Chaîne JSON, ou null si vide.
+# JSON string, or null when empty.
 json_opt_str() {
   if [[ -n $1 ]]; then json_str "$1"; else printf 'null'; fi
 }
 
-# Token URL-safe, même alphabet sans ambiguïté que l'app (PathTokenGen) :
-# pas de 0/O, 1/l/I. Tirage par rejet (octet < 216 = 4 × 54) pour rester
-# uniforme. Pas de `tr </dev/urandom | head` : sous pipefail, le SIGPIPE de
-# tr fait échouer tout le script.
+# URL-safe token, same unambiguous alphabet as the app (PathTokenGen): no
+# 0/O, 1/l/I. Rejection sampling (byte < 216 = 4 x 54) keeps it uniform. No
+# `tr </dev/urandom | head`: under pipefail, tr's SIGPIPE would make the whole
+# script fail.
 gen_path_token() {
   local alphabet='ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789'
   local out='' b
@@ -52,8 +49,8 @@ gen_path_token() {
   printf '%s' "$out"
 }
 
-# Entier décimal dans [min, max], renvoyé sans zéros de tête (interdits en
-# JSON).
+# Decimal integer in [min, max], returned without leading zeros (forbidden
+# in JSON).
 check_int() {
   local name=$1 value=$2 min=$3 max=$4
   [[ $value =~ ^[0-9]{1,9}$ ]] && (( 10#$value >= min && 10#$value <= max )) \
@@ -67,7 +64,6 @@ done
 
 # ============================================================================
 # Configuration — adapt to your setup
-# Configuration — à adapter
 # ============================================================================
 : "${USER:=$(id -un)}"                   # absent in some containers / CI
 CONFIG_ID="${CONFIG_ID:-jellyfin-${USER}}"
@@ -77,18 +73,18 @@ UPSTREAM_HOST="${UPSTREAM_HOST:-media.example.com}"
 UPSTREAM_PORT="${UPSTREAM_PORT:-443}"
 SNI="${SNI:-}"                           # leave empty to default to UPSTREAM_HOST
 MODE="${MODE:-LOOPBACK}"                 # LOOPBACK or VPN
-# Port loopback fixe : l'URL collée dans l'app cible doit survivre aux
-# redémarrages du proxy. Tiré au hasard dans 10001..32767 comme le fait l'app
-# (au-dessus des ports « registered » courants, sous la plage éphémère Linux).
-# LOOPBACK_PORT=0 = port tiré par l'app à l'import (comme un port déjà pris
-# sur le téléphone).
+# Fixed loopback port: the URL pasted into the target app must survive proxy
+# restarts. Drawn at random in 10001..32767 like the app does (above the
+# common "registered" ports, below the Linux ephemeral range).
+# LOOPBACK_PORT=0 = port drawn by the app on import (as for a port already
+# taken on the phone).
 LOOPBACK_PORT="${LOOPBACK_PORT:-$(( 10001 + ((RANDOM << 15) | RANDOM) % 22767 ))}"
 SYNTHETIC_IP="${SYNTHETIC_IP:-}"         # VPN only, e.g. "192.0.2.1"
 SYNTHETIC_PORT="${SYNTHETIC_PORT:-}"     # VPN only
-# Loopback only : token URL-safe à inclure dans le path HTTP pour isoler ce
-# proxy des autres apps du device. Recommandé. Génère par défaut un token
-# aléatoire de 12 chars d'alphabet sans ambiguïté. Set PATH_TOKEN_DISABLE=1
-# pour désactiver complètement.
+# Loopback only: URL-safe token included in the HTTP path to isolate this
+# proxy from the other apps on the device. Recommended. By default a random
+# 12-character token from an unambiguous alphabet is generated. Set
+# PATH_TOKEN_DISABLE=1 to disable it completely.
 if [[ -z "${PATH_TOKEN:-}" && "${PATH_TOKEN_DISABLE:-0}" != "1" ]]; then
   PATH_TOKEN="$(gen_path_token)"
 fi
@@ -115,7 +111,7 @@ case "$MODE" in
   LOOPBACK|VPN) ;;
   *) die "MODE must be LOOPBACK or VPN" ;;
 esac
-# Sert de nom de fichier dans le zip : pas de « / » ni de nom caché.
+# Used as a file name inside the zip: no "/" and no hidden name.
 [[ $CONFIG_ID =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
   || die "CONFIG_ID must match [A-Za-z0-9][A-Za-z0-9._-]* (got '$CONFIG_ID')"
 UPSTREAM_PORT="$(check_int UPSTREAM_PORT "$UPSTREAM_PORT" 1 65535)"
@@ -123,7 +119,7 @@ VALIDITY_DAYS="$(check_int VALIDITY_DAYS "$VALIDITY_DAYS" 1 36500)"
 KEY_SIZE="$(check_int KEY_SIZE "$KEY_SIZE" 2048 16384)"
 if [[ "$MODE" == "LOOPBACK" ]]; then
   LOOPBACK_PORT="$(check_int LOOPBACK_PORT "$LOOPBACK_PORT" 0 65535)"
-  # Une app Android ne peut pas écouter sous 1024.
+  # An Android app cannot listen below 1024.
   (( LOOPBACK_PORT == 0 || LOOPBACK_PORT >= 1024 )) \
     || die "LOOPBACK_PORT must be 0 or >= 1024 (got $LOOPBACK_PORT)"
   [[ -z $PATH_TOKEN || $PATH_TOKEN =~ ^[A-Za-z0-9._~-]+$ ]] \
@@ -153,9 +149,9 @@ openssl x509 -req -in "$WORK/client.csr" \
   -out "$BUNDLE/${CONFIG_ID}-cert.pem" 2>/dev/null
 cp "$BACKEND_CA_CRT" "$BUNDLE/${CONFIG_ID}-ca.pem"
 
-# PKCS#12 (cert + key) protected by passphrase. Passée par l'environnement
-# d'openssl seul (env:), pas en argument : la ligne de commande d'un process
-# est lisible par tous via ps / /proc/<pid>/cmdline.
+# PKCS#12 (cert + key) protected by the passphrase. It is passed through
+# openssl's environment only (env:), not as an argument: a process's command
+# line is readable by everyone through ps / /proc/<pid>/cmdline.
 P12_PASSPHRASE="$P12_PASSPHRASE" openssl pkcs12 -export \
   -in "$BUNDLE/${CONFIG_ID}-cert.pem" \
   -inkey "$WORK/client.key" \
@@ -211,30 +207,30 @@ cat > "$BUNDLE/README.txt" <<EOF
 mTLS Bridge deployment bundle (schema v2)
 Generated $(date -Iseconds) by $(whoami)@$(hostname)
 
-To import: open this .zip with the mTLS Bridge Android app (menu ⋮ → Importer).
+To import: open this .zip with the mTLS Bridge Android app (menu ⋮ → Import).
 The app will prompt for the PKCS#12 passphrase, then install everything.
 
 After successful import, the original .p12 can be safely deleted.
 EOF
 
-# Final zip. -j : entrées à la racine du zip ; -X : sans uid/gid ni attributs
-# étendus de la machine de l'admin.
+# Final zip. -j: entries at the root of the zip; -X: without the uid/gid or
+# extended attributes of the admin's machine.
 zip -q -j -X "$WORK/bundle.zip" "$BUNDLE"/*
 mkdir -p -- "$(dirname -- "$OUTPUT")"
 mv -f -- "$WORK/bundle.zip" "$OUTPUT"
 
 echo ""
-echo "  ✓ bundle:     ${OUTPUT}"
-echo "  ✓ passphrase: ${P12_PASSPHRASE}"
+echo "  bundle:     ${OUTPUT}"
+echo "  passphrase: ${P12_PASSPHRASE}"
 if [[ "$MODE" == "LOOPBACK" ]]; then
   if (( LOOPBACK_PORT == 0 )); then
-    echo "  ! URL :       port tiré par l'app à l'import (LOOPBACK_PORT=0) —"
-    echo "                visible dans le détail de la config dans l'app"
+    echo "  URL:        port drawn by the app on import (LOOPBACK_PORT=0) —"
+    echo "              shown in the config details in the app"
   else
-    echo "  ✓ URL :       http://127.0.0.1:${LOOPBACK_PORT}/${PATH_TOKEN:+${PATH_TOKEN}/}"
-    echo "                (à coller dans l'app cible après import — visible aussi"
-    echo "                 dans le détail de la config dans l'app mTLS Bridge,"
-    echo "                 qui fait foi si le port était déjà pris sur le téléphone)"
+    echo "  URL:        http://127.0.0.1:${LOOPBACK_PORT}/${PATH_TOKEN:+${PATH_TOKEN}/}"
+    echo "              (to paste into the target app after import — also shown"
+    echo "               in the config details in the mTLS Bridge app, which is"
+    echo "               authoritative if the port was already taken on the phone)"
   fi
 fi
 echo ""

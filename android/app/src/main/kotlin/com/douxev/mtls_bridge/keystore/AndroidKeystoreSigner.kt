@@ -13,17 +13,17 @@ import java.security.spec.MGF1ParameterSpec
 import java.security.spec.PSSParameterSpec
 
 /**
- * Implémentation Kotlin du trait [KeystoreSigner] (exposé via uniffi).
+ * Kotlin implementation of the [KeystoreSigner] trait (exposed via uniffi).
  *
- * Chaque appel à [sign] :
- *  1. récupère la `PrivateKey` du Keystore via son alias,
- *  2. instancie `Signature.getInstance(jcaAlgo)` (RSA ou ECDSA, SHA256/384/512,
- *     PSS ou PKCS1),
- *  3. `initSign(privateKey)` — l'objet `PrivateKey` est juste un handle vers
- *     le TEE, la signature elle-même s'exécute dans le matériel,
- *  4. `update(data) + sign()` → bytes renvoyés à rustls.
+ * Each call to [sign]:
+ *  1. fetches the `PrivateKey` from the Keystore by its alias,
+ *  2. creates `Signature.getInstance(jcaAlgo)` (RSA or ECDSA, SHA256/384/512,
+ *     PSS or PKCS1),
+ *  3. `initSign(privateKey)`: the `PrivateKey` object is only a handle to the
+ *     TEE, the signature itself runs in hardware,
+ *  4. `update(data) + sign()`: the bytes are returned to rustls.
  *
- * Aucune copie du matériel cryptographique n'est faite côté JVM.
+ * No copy of the key material is ever made on the JVM side.
  */
 class AndroidKeystoreSigner : KeystoreSigner {
 
@@ -37,7 +37,7 @@ class AndroidKeystoreSigner : KeystoreSigner {
         `data`: ByteArray,
     ): ByteArray {
         val privateKey = (androidKs.getKey(keyHandle, null) as? PrivateKey)
-            ?: throw SignerException.KeyUnavailable("alias $keyHandle introuvable")
+            ?: throw SignerException.KeyUnavailable("alias $keyHandle not found")
 
         val (jcaAlgo, params) = mapScheme(scheme)
         try {
@@ -56,10 +56,10 @@ class AndroidKeystoreSigner : KeystoreSigner {
             ?: return emptyList()
         return when (pk.algorithm) {
             KeyProperties.KEY_ALGORITHM_EC -> {
-                // TLS 1.3 lie le schéma ECDSA à la courbe de la clé : une clé
-                // P-384 ne peut signer qu'en ecdsa_secp384r1_sha384. On lit la
-                // courbe sur la clé publique du cert (fiable, contrairement à un
-                // défaut sur KeyInfo) ; courbe inconnue (P-521…) ⇒ rien.
+                // TLS 1.3 binds the ECDSA scheme to the key's curve: a P-384
+                // key can only sign with ecdsa_secp384r1_sha384. The curve is
+                // read from the cert's public key (reliable, unlike a default
+                // on KeyInfo); unknown curve (P-521...) means nothing.
                 val curveBits = (androidKs.getCertificate(keyHandle)?.publicKey as? ECPublicKey)
                     ?.params?.curve?.field?.fieldSize
                 when (curveBits) {
@@ -69,9 +69,9 @@ class AndroidKeystoreSigner : KeystoreSigner {
                 }
             }
             KeyProperties.KEY_ALGORITHM_RSA -> {
-                // RSA peut faire PSS et PKCS1 sur tous les hashs courants.
-                // TLS 1.3 n'accepte que PSS pour RSA ; on liste les deux pour
-                // garder TLS 1.2 fonctionnel sur les vieux backends.
+                // RSA can do PSS and PKCS1 with every common hash.
+                // TLS 1.3 only accepts PSS for RSA; both are listed to keep
+                // TLS 1.2 working with old backends.
                 listOf(
                     TlsSignatureScheme.RSA_PSS_SHA256,
                     TlsSignatureScheme.RSA_PSS_SHA384,

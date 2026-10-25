@@ -19,10 +19,10 @@ class ProxyModeConverters {
 
 @Database(
     entities = [ConfigEntity::class, AuditEventEntity::class],
-    // v5 ajoute `pathToken` (token secret dans le path HTTP pour isolation
-    // loopback), v6 `extraCanonicalHosts`. Chaque montée de version DOIT avoir
-    // sa Migration ci-dessous : les configs référencent des clés Keystore
-    // non-exportables, une base effacée les rend irrécupérables.
+    // v5 adds `pathToken` (secret token in the HTTP path for loopback
+    // isolation), v6 `extraCanonicalHosts`. Every version bump MUST have its
+    // Migration below: configs reference non-exportable Keystore keys, so a
+    // wiped database makes them unrecoverable.
     version = 6,
     exportSchema = true,
 )
@@ -47,8 +47,8 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
-         * Récupère (ou crée) la DB SQLCipher. La passphrase est dérivée d'une
-         * clé AES non-exportable stockée dans le Keystore Android — voir
+         * Returns (or creates) the SQLCipher DB. The passphrase is derived from
+         * a non-exportable AES key stored in the Android Keystore; see
          * [com.douxev.mtls_bridge.keystore.DbPassphraseProvider].
          */
         fun get(context: Context, passphrase: ByteArray): AppDatabase {
@@ -59,15 +59,15 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         private fun build(context: Context, passphrase: ByteArray): AppDatabase {
-            // SQLCipher 4.6 : charger la lib native avant d'instancier le helper.
+            // SQLCipher 4.6: load the native library before creating the helper.
             System.loadLibrary("sqlcipher")
             val factory = SupportOpenHelperFactory(passphrase)
             return Room
                 .databaseBuilder(context, AppDatabase::class.java, "mtls_bridge.db")
                 .openHelperFactory(factory)
                 .addMigrations(MIGRATION_4_5, MIGRATION_5_6)
-                // Schémas v1-v3 antérieurs au premier commit (aucune trace pour
-                // écrire leurs migrations) : seuls eux restent destructifs.
+                // Schemas v1-v3 predate the first commit (no record left to write
+                // their migrations): only those remain destructive.
                 .fallbackToDestructiveMigrationFrom(1, 2, 3)
                 .build()
         }

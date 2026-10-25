@@ -11,7 +11,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.data.KeySecurityLevel
 import com.douxev.mtls_bridge.data.ProxyMode
 
@@ -29,12 +31,12 @@ fun SecurityBadge(level: KeySecurityLevel, modifier: Modifier = Modifier) {
             MaterialTheme.colorScheme.onSecondaryContainer,
         )
         KeySecurityLevel.SOFTWARE -> Triple(
-            "Software",
+            stringResource(R.string.common_badge_software),
             MaterialTheme.colorScheme.errorContainer,
             MaterialTheme.colorScheme.onErrorContainer,
         )
         KeySecurityLevel.UNKNOWN -> Triple(
-            "?",
+            stringResource(R.string.common_badge_unknown),
             MaterialTheme.colorScheme.surfaceVariant,
             MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -57,7 +59,13 @@ fun SecurityBadge(level: KeySecurityLevel, modifier: Modifier = Modifier) {
 fun ModeChip(mode: ProxyMode) {
     AssistChip(
         onClick = {},
-        label = { Text(if (mode == ProxyMode.VPN) "VPN" else "Loopback") },
+        label = {
+            Text(
+                stringResource(
+                    if (mode == ProxyMode.VPN) R.string.common_mode_vpn else R.string.common_mode_loopback
+                )
+            )
+        },
         colors = AssistChipDefaults.assistChipColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
         ),

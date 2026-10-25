@@ -28,7 +28,7 @@ class ConfigListViewModel(
         viewModelScope.launch { repo.setEnabled(id, enabled) }
     }
 
-    /** Renvoie le zip exporté à écrire dans un fichier (null=all configs). */
+    /** Returns the exported zip to write to a file (null = all configs). */
     suspend fun exportToZip(selectedIds: Set<String>?): ByteArray = repo.exportZip(selectedIds)
 
     suspend fun peekImportZip(zipBytes: ByteArray) = repo.peekZip(zipBytes)

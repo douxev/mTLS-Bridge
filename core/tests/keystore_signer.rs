@@ -1,9 +1,9 @@
-//! Test du chemin `PrivateKeyMaterial::Keystore` : la clé n'est jamais passée
-//! à rustls directement, elle vit "ailleurs". Notre `KeystoreSigner` mock
-//! détient une clé ECDSA P-256 chargée en RAM via rustls/aws-lc-rs et signe à
-//! la demande. Côté Android la vraie implémentation passera par
-//! `Signature.getInstance("SHA256withECDSA").initSign(privateKey)` où
-//! `privateKey` est un handle Keystore non-exportable.
+//! Test of the `PrivateKeyMaterial::Keystore` path: the key is never handed
+//! to rustls directly, it lives "elsewhere". Our mock `KeystoreSigner` holds
+//! an ECDSA P-256 key loaded in RAM through rustls/aws-lc-rs and signs on
+//! demand. On Android, the real implementation goes through
+//! `Signature.getInstance("SHA256withECDSA").initSign(privateKey)` where
+//! `privateKey` is a non-exportable Keystore handle.
 
 use std::sync::Arc;
 
@@ -61,12 +61,12 @@ impl KeystoreSigner for TestSigner {
     }
 
     fn supported_schemes(&self, _key_handle: String) -> Vec<TlsSignatureScheme> {
-        // Notre clé de test est ECDSA P-256 (rcgen default).
+        // Our test key is ECDSA P-256 (rcgen default).
         vec![TlsSignatureScheme::EcdsaNistp256Sha256]
     }
 }
 
-// ---------- PKI helpers (alignées sur mtls_bridge.rs) ----------
+// ---------- PKI helpers (aligned with mtls_bridge.rs) ----------
 
 struct Pki {
     ca_pem: Vec<u8>,
@@ -185,7 +185,7 @@ async fn spawn_mtls_echo_server(pki: &Pki) -> u16 {
     port
 }
 
-// ---------- Le test ----------
+// ---------- The test ----------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn callback_keystore_signer_completes_mtls_handshake() -> Result<()> {
@@ -194,8 +194,8 @@ async fn callback_keystore_signer_completes_mtls_handshake() -> Result<()> {
     let pki = build_pki();
     let port = spawn_mtls_echo_server(&pki).await;
 
-    // Le signer "Keystore" simulé tient la clé client. La struct ProxyConfig
-    // n'a *que* le handle + l'instance signer — pas la clé elle-même.
+    // The simulated "Keystore" signer holds the client key. The ProxyConfig
+    // struct has *only* the handle + the signer instance, not the key itself.
     let signer: Arc<dyn KeystoreSigner> = Arc::new(TestSigner::from_pkcs8_pem(&pki.client_key_pem));
 
     let cfg = ProxyConfig {
@@ -240,7 +240,7 @@ async fn callback_keystore_signer_completes_mtls_handshake() -> Result<()> {
     proxy_task.await.unwrap()?;
 
     let body = String::from_utf8_lossy(&response);
-    assert!(body.contains("HTTP/1.1 200 OK"), "réponse : {body}");
-    assert!(body.ends_with("ks-ok"), "corps : {body}");
+    assert!(body.contains("HTTP/1.1 200 OK"), "response: {body}");
+    assert!(body.ends_with("ks-ok"), "body: {body}");
     Ok(())
 }

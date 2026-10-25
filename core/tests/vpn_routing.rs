@@ -1,10 +1,9 @@
-//! Test unitaire de la table de routage VPN : on construit plusieurs routes
-//! avec des IP/port synthétiques différents, on vérifie que les lookups
-//! matchent, et qu'un doublon (même IP+port pour deux configs) est rejeté.
+//! Unit test of the VPN routing structure: several routes are built with
+//! different synthetic IPs/ports, and their keys are checked to be distinct.
 //!
-//! Pas de test end-to-end avec un vrai tun_fd : ça demanderait CAP_NET_ADMIN
-//! et des privilèges root sur la machine de build, hors scope CI. Le pipeline
-//! complet sera validé sur device via les tests instrumentés Android.
+//! No end-to-end test with a real tun_fd: that would require CAP_NET_ADMIN
+//! and root privileges on the build machine, out of scope for CI. The full
+//! pipeline is validated on device through the Android instrumented tests.
 
 #![cfg(any(target_os = "linux", target_os = "android"))]
 
@@ -14,8 +13,8 @@ use mtls_bridge_core::config::{ClientIdentity, PrivateKeyMaterial, ProxyConfig, 
 use mtls_bridge_core::vpn::VpnRoute;
 
 fn dummy_cfg(id: &str) -> Arc<ProxyConfig> {
-    // PEM bidons : on ne précompile pas réellement de ClientConfig dans ce
-    // test (vpn::start_vpn le ferait), on teste juste la structure de routage.
+    // Dummy PEMs: no ClientConfig is actually precompiled in this test
+    // (vpn::start_vpn would do it), only the routing structure is tested.
     Arc::new(ProxyConfig {
         id: id.into(),
         upstream_host: "x".into(),
@@ -45,7 +44,7 @@ fn route_struct_uses_synthetic_address_as_key() {
         config: dummy_cfg("nextcloud"),
         expected_uid: 10043,
     };
-    // Les deux routes ont des SocketAddr distinctes : pas de collision.
+    // The two routes have distinct SocketAddrs: no collision.
     assert_ne!(
         (r1.synthetic_ip, r1.synthetic_port),
         (r2.synthetic_ip, r2.synthetic_port)

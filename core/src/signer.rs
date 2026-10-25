@@ -1,12 +1,12 @@
-//! Pont entre rustls et le Keystore Android.
+//! Bridge between rustls and the Android Keystore.
 //!
-//! La clé privée vit dans le TEE Android (Keystore hardware-backed). Pendant le
-//! handshake mTLS, rustls a besoin de signer un message (CertificateVerify).
-//! On ne peut pas lui donner la clé : on lui donne un objet implémentant
-//! [`rustls::sign::SigningKey`] qui délègue à un trait Rust ([`KeystoreSigner`])
-//! exposé via uniffi à Kotlin. Côté Kotlin, l'implémentation appelle
-//! `KeyStore.getKey(alias)` + `Signature.getInstance(...)` qui exécute la
-//! signature dans le TEE — la clé ne quitte jamais le matériel.
+//! The private key lives in the Android TEE (hardware-backed Keystore). During
+//! the mTLS handshake, rustls needs to sign a message (CertificateVerify).
+//! The key cannot be handed to it: instead it gets an object implementing
+//! [`rustls::sign::SigningKey`] that delegates to a Rust trait ([`KeystoreSigner`])
+//! exported to Kotlin through uniffi. On the Kotlin side, the implementation
+//! calls `KeyStore.getKey(alias)` + `Signature.getInstance(...)`, which runs
+//! the signature in the TEE: the key never leaves the hardware.
 
 use std::fmt;
 use std::sync::Arc;
@@ -14,11 +14,11 @@ use std::sync::Arc;
 use rustls::client::ResolvesClientCert;
 use rustls::sign::{CertifiedKey, Signer, SigningKey};
 use rustls::{SignatureAlgorithm, SignatureScheme};
-/// Schémas de signature TLS supportés par Android Keystore.
+/// TLS signature schemes supported by Android Keystore.
 ///
-/// On les expose à uniffi avec une enum propre à nous au lieu d'utiliser
-/// `rustls::SignatureScheme` (que uniffi ne peut pas dériver). Le mapping
-/// 1-pour-1 vers/depuis rustls est dans [`scheme_to_rustls`] / [`scheme_from_rustls`].
+/// They are exported to uniffi through our own enum instead of
+/// `rustls::SignatureScheme` (which uniffi cannot derive). The one-to-one
+/// mapping to/from rustls is in [`scheme_to_rustls`] / [`scheme_from_rustls`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
 pub enum TlsSignatureScheme {
     EcdsaNistp256Sha256,
@@ -34,21 +34,21 @@ pub enum TlsSignatureScheme {
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 #[uniffi(flat_error)]
 pub enum SignerError {
-    #[error("schéma de signature non supporté par cette clé")]
+    #[error("signature scheme not supported by this key")]
     Unsupported,
-    #[error("clé introuvable ou inutilisable")]
+    #[error("key not found or unusable")]
     KeyUnavailable,
     #[error("signature: {0}")]
     Failed(String),
 }
 
-/// Trait implémenté côté Kotlin (callback uniffi). Une instance par device
-/// (souvent un singleton qui parle au `KeyStore` Android).
+/// Trait implemented on the Kotlin side (uniffi callback). One instance per
+/// device (often a singleton that talks to the Android `KeyStore`).
 #[uniffi::export(with_foreign)]
 pub trait KeystoreSigner: Send + Sync {
-    /// Signe `data` avec la clé identifiée par `key_handle` selon `scheme`.
-    /// L'implémentation Kotlin doit utiliser `Signature.getInstance` avec
-    /// l'algo correspondant et passer par le `PrivateKey` Keystore.
+    /// Signs `data` with the key identified by `key_handle` using `scheme`.
+    /// The Kotlin implementation must use `Signature.getInstance` with the
+    /// matching algorithm and go through the Keystore `PrivateKey`.
     fn sign(
         &self,
         key_handle: String,
@@ -56,8 +56,8 @@ pub trait KeystoreSigner: Send + Sync {
         data: Vec<u8>,
     ) -> Result<Vec<u8>, SignerError>;
 
-    /// Liste des schémas que la clé `key_handle` peut produire. Côté Kotlin
-    /// déterminé par `KeyInfo.getKeyAlgorithm()` + taille/courbe.
+    /// Schemes that the key `key_handle` can produce. On the Kotlin side this
+    /// is determined by `KeyInfo.getKeyAlgorithm()` + key size/curve.
     fn supported_schemes(&self, key_handle: String) -> Vec<TlsSignatureScheme>;
 }
 
@@ -88,7 +88,7 @@ pub fn scheme_from_rustls(s: SignatureScheme) -> Option<TlsSignatureScheme> {
     }
 }
 
-/// `SigningKey` rustls qui délègue la signature au callback Keystore.
+/// rustls `SigningKey` that delegates signing to the Keystore callback.
 pub(crate) struct CallbackSigningKey {
     pub handle: String,
     pub callback: Arc<dyn KeystoreSigner>,
@@ -108,8 +108,8 @@ impl fmt::Debug for CallbackSigningKey {
 
 impl SigningKey for CallbackSigningKey {
     fn choose_scheme(&self, offered: &[SignatureScheme]) -> Option<Box<dyn Signer>> {
-        // On prend le premier schéma proposé par le serveur qu'on supporte —
-        // l'ordre du serveur reflète sa préférence (RFC 8446 §4.2.3).
+        // Pick the first scheme offered by the server that is supported:
+        // the server's order reflects its preference (RFC 8446 §4.2.3).
         for o in offered {
             if self.supported.contains(o) {
                 return Some(Box::new(CallbackSigner {
@@ -145,10 +145,10 @@ impl fmt::Debug for CallbackSigner {
 impl Signer for CallbackSigner {
     fn sign(&self, message: &[u8]) -> Result<Vec<u8>, rustls::Error> {
         let our_scheme = scheme_from_rustls(self.scheme).ok_or_else(|| {
-            rustls::Error::General(format!("scheme {:?} non mappable", self.scheme))
+            rustls::Error::General(format!("scheme {:?} cannot be mapped", self.scheme))
         })?;
-        // Appel Kotlin bloquant (TEE/StrongBox) au milieu du handshake : le
-        // worker est libéré pour les autres sessions pendant ce temps.
+        // Blocking Kotlin call (TEE/StrongBox) in the middle of the handshake:
+        // the worker is freed for the other sessions in the meantime.
         crate::runtime::blocking(|| {
             self.callback
                 .sign(self.handle.clone(), our_scheme, message.to_vec())
@@ -161,10 +161,10 @@ impl Signer for CallbackSigner {
     }
 }
 
-/// Resolver qui renvoie toujours la même `CertifiedKey` (un seul cert client
-/// par connexion, c'est notre cas). Le serveur peut envoyer une liste de CA
-/// acceptables via `root_hint_subjects` — on l'ignore : le user a configuré
-/// explicitement le cert à utiliser pour cet upstream.
+/// Resolver that always returns the same `CertifiedKey` (a single client cert
+/// per connection, which is the case here). The server may send a list of
+/// acceptable CAs through `root_hint_subjects`; it is ignored: the user has
+/// explicitly configured the cert to use for this upstream.
 #[derive(Debug)]
 pub(crate) struct CallbackResolvesClientCert {
     pub certified: Arc<CertifiedKey>,

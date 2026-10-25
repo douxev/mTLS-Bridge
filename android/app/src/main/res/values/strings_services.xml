@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Text produced by the background services and the LAN admin console
+     (notifications, status and activity messages shown on the device). -->
+<resources>
+    <!-- Foreground notifications (service/ProxyNotifications.kt) -->
+    <string name="svc_channel_name">Active mTLS proxy</string>
+    <string name="svc_channel_description">Shown while an mTLS proxy is running in the background</string>
+    <string name="svc_action_stop_vpn">Stop VPN</string>
+    <string name="svc_action_stop">Stop</string>
+
+    <!-- service/LoopbackProxyService.kt -->
+    <string name="svc_loopback_notif_title">mTLS proxies</string>
+    <string name="svc_loopback_notif_text">%1$d active</string>
+
+    <!-- service/MtlsVpnService.kt -->
+    <string name="svc_vpn_notif_title">mTLS tunnel</string>
+    <string name="svc_vpn_notif_text">Local VPN active. Tap Stop VPN to stop it</string>
+
+    <!-- LAN admin console status (remote/RemoteAdminServer.kt) -->
+    <string name="svc_remote_start_failed">Could not start: %1$s</string>
+    <string name="svc_remote_idle_stopped">Stopped after %1$d min without activity</string>
+    <string name="svc_remote_browser_paired">Browser paired</string>
+
+    <!-- Last remote action shown on the device (remote/RemoteAdminApi.kt).
+         %1$s = config name, %2$s = IP address of the browser. -->
+    <string name="svc_activity_created">\"%1$s\" created from %2$s</string>
+    <string name="svc_activity_updated">\"%1$s\" updated from %2$s</string>
+    <string name="svc_activity_deleted">\"%1$s\" deleted from %2$s</string>
+    <string name="svc_activity_enabled">\"%1$s\" enabled from %2$s</string>
+    <string name="svc_activity_disabled">\"%1$s\" disabled from %2$s</string>
+    <string name="svc_activity_key_imported">Key for \"%1$s\" imported from %2$s</string>
+    <!-- %1$s = IP address of the browser, then ready / without key / skipped counts. -->
+    <string name="svc_activity_bundle_imported">Bundle imported from %1$s: %2$d ready, %3$d without key, %4$d skipped</string>
+    <!-- %1$d = number of configs, %2$s = IP address of the browser. -->
+    <string name="svc_activity_export_some">Export (%1$d config(s)) downloaded from %2$s</string>
+    <string name="svc_activity_export_all">Export (all configs) downloaded from %1$s</string>
+    <string name="svc_activity_vpn_started">VPN tunnel started from %1$s</string>
+    <string name="svc_activity_vpn_stopped">VPN tunnel stopped from %1$s</string>
+</resources>

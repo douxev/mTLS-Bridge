@@ -2,66 +2,67 @@ use std::sync::Arc;
 
 use crate::signer::KeystoreSigner;
 
-/// Configuration d'un proxy mTLS pour une app cliente.
+/// Configuration of an mTLS proxy for a client app.
 ///
-/// L'identité cliente (chaîne de certs + clé privée) est encapsulée par
-/// [`ClientIdentity`] qui peut être soit chargée en RAM (tests) soit déléguée
-/// à un [`KeystoreSigner`] côté Android (production).
+/// The client identity (certificate chain + private key) is wrapped in
+/// [`ClientIdentity`], which can either be loaded in RAM (tests) or delegated
+/// to a [`KeystoreSigner`] on the Android side (production).
 #[derive(Clone)]
 pub struct ProxyConfig {
-    /// Identifiant logique de la config (UI). Doit être stable.
+    /// Logical identifier of the config (UI). Must be stable.
     pub id: String,
-    /// Hôte distant (DNS ou IP).
+    /// Remote host (DNS name or IP).
     pub upstream_host: String,
-    /// Port distant.
+    /// Remote port.
     pub upstream_port: u16,
-    /// SNI à envoyer dans le handshake TLS. Défaut = `upstream_host`.
+    /// SNI to send in the TLS handshake. Defaults to `upstream_host`.
     pub sni: Option<String>,
-    /// Identité client + politique de validation serveur.
+    /// Client identity + server validation policy.
     pub identity: ClientIdentity,
-    /// CA distante à épingler. `None` = trust store système (déconseillé en prod).
+    /// Remote CA to pin. `None` = system trust store (not recommended in production).
     pub server_trust: ServerTrust,
-    /// Optionnel : token secret dans le premier segment du path HTTP. Si
-    /// présent, le bridge n'accepte que les requêtes dont l'URL commence par
-    /// `/<token>/` (ou `/<token>` pour la racine) ou qui portent le cookie
-    /// de session posé en réponse à une telle requête (cf.
-    /// [`crate::http_rewrite::PathAuth`]), strippe ce préfixe avant forward
-    /// upstream, et close fail-closed sinon. Remplace l'isolation par UID
-    /// qui n'est pas accessible aux apps non-VPN sur Android.
+    /// Optional: secret token in the first segment of the HTTP path. When
+    /// set, the bridge only accepts requests whose URL starts with
+    /// `/<token>/` (or `/<token>` for the root) or that carry the session
+    /// cookie set in response to such a request (see
+    /// [`crate::http_rewrite::PathAuth`]), strips that prefix before
+    /// forwarding upstream, and closes fail-closed otherwise. Replaces UID
+    /// isolation, which is not available to non-VPN apps on Android.
     pub path_token: Option<String>,
-    /// Hosts canoniques additionnels à réécrire vers le loopback en mode
-    /// rewrite. Indispensable quand l'application backend émet des URLs
-    /// absolues avec un host différent de l'upstream physique (ex. Nextcloud
-    /// avec `overwrite.cli.url` qui diffère du hostname utilisé par le
-    /// reverse-proxy mTLS).
+    /// Additional canonical hosts to rewrite to the loopback address in
+    /// rewrite mode. Required when the backend application emits absolute
+    /// URLs with a host different from the physical upstream (e.g. Nextcloud
+    /// with an `overwrite.cli.url` that differs from the hostname used by the
+    /// mTLS reverse proxy).
     pub extra_canonical_hosts: Vec<String>,
 }
 
 #[derive(Clone)]
 pub enum ServerTrust {
-    /// Épingle un ou plusieurs certificats CA (PEM, concaténés).
+    /// Pins one or more CA certificates (PEM, concatenated).
     Pinned(Arc<Vec<u8>>),
-    /// Trust store du système (peu utile sur Android sans intégration plate-forme).
+    /// System trust store (of little use on Android without platform integration).
     SystemRoots,
 }
 
 #[derive(Clone)]
 pub struct ClientIdentity {
-    /// Chaîne de certificats du client (PEM, leaf en premier).
+    /// Client certificate chain (PEM, leaf first).
     pub cert_chain_pem: Arc<Vec<u8>>,
-    /// Clé privée — soit en RAM (test/MVP), soit handle vers Keystore (phase C).
+    /// Private key: either in RAM (test/MVP) or a handle to the Keystore (phase C).
     pub key: PrivateKeyMaterial,
 }
 
 #[derive(Clone)]
 pub enum PrivateKeyMaterial {
-    /// Clé en clair, en RAM. **À ne pas utiliser sur device** : la RAM Android
-    /// est balayable depuis le debugger ADB et la clé doit rester dans le TEE.
-    /// Acceptable pour tests d'intégration et migration depuis un .p12.
+    /// Plaintext key in RAM. **Do not use on a device**: Android RAM can be
+    /// scanned from the ADB debugger and the key must stay in the TEE.
+    /// Acceptable for integration tests and for migrating from a .p12.
     InMemoryPem(Arc<Vec<u8>>),
-    /// Délégation vers Android Keystore via un callback uniffi. Le `handle`
-    /// est l'alias Keystore (identifiant opaque côté Rust). Le `signer` est
-    /// fourni par l'hôte Android (implémente [`KeystoreSigner`] côté Kotlin).
+    /// Delegation to Android Keystore through a uniffi callback. The `handle`
+    /// is the Keystore alias (an opaque identifier on the Rust side). The
+    /// `signer` is provided by the Android host (implements [`KeystoreSigner`]
+    /// on the Kotlin side).
     Keystore {
         handle: String,
         signer: Arc<dyn KeystoreSigner>,

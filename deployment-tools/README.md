@@ -1,12 +1,12 @@
 # mTLS Bridge deployment tools
 
-Tools to create [mTLS Bridge](https://github.com/<your-org>/mtls-bridge)
+Tools to create [mTLS Bridge](https://github.com/douxev/mTLS-Bridge)
 deployment bundles for distributing mTLS configurations + client
 certificates to end users (typically employees of a small company
 running self-hosted services behind a Caddy/Nginx/Traefik reverse
 proxy with mutual-TLS authentication).
 
-[🇫🇷 Version française](README.fr.md)
+[Version française](README.fr.md)
 
 ## What's in this repo
 
@@ -20,8 +20,8 @@ proxy with mutual-TLS authentication).
 ## Quick start
 
 ```bash
-git clone https://github.com/<your-org>/mTLS-Bridge-doc.git
-cd mTLS-Bridge-doc
+git clone https://github.com/douxev/mTLS-Bridge.git
+cd mTLS-Bridge/deployment-tools
 
 # Point the script at your backend CA (private key + cert)
 export BACKEND_CA_CRT=/path/to/backend-ca.crt
@@ -67,7 +67,7 @@ Every setting is an environment variable.
 1. Installs **mTLS Bridge** from the Play Store.
 2. Taps on the received `.zip` file.
 3. Picks "mTLS Bridge" as the opener, or opens mTLS Bridge and chooses
-   menu ⋮ → Importer.
+   menu ⋮ → Import.
 4. Enters the passphrase you sent separately.
 5. The config is imported, the private key is moved into Android
    Keystore (hardware-backed when supported), the proxy starts.
@@ -85,7 +85,7 @@ Every setting is an environment variable.
   through the Keystore — never read the key material.
 - The `mtls-bridge-bundle.zip` and the passphrase **must travel through
   separate channels**. The bundle alone is useless without the
-  passphrase ; the passphrase alone is useless without the bundle.
+  passphrase; the passphrase alone is useless without the bundle.
 - The script never writes the cleartext client key to disk past the
   `.p12` packaging step; intermediate `.key` and `.csr` are deleted
   before the zip is built.
@@ -120,7 +120,7 @@ Nextcloud for the same employee). All `.p12` files in the bundle
 must share the **same passphrase** — the app prompts only once.
 
 For the multi-config case, the script as shipped covers one config.
-Multi-config is a 30-line extension : generate the artifacts in a loop
+Multi-config is a ~30-line extension: generate the artifacts in a loop
 and emit a `configs.json` with multiple entries pointing at the
 respective files — `examples/multi-config.sh` does it for two configs.
 A `loopbackPort` already used on the device (or by another config of the

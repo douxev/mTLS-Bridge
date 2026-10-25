@@ -1,20 +1,20 @@
-//! Proxy HTTP/1.1 per-requête entre l'app cliente (en clair) et l'upstream
-//! mTLS.
+//! Per-request HTTP/1.1 proxy between the client app (plaintext) and the mTLS
+//! upstream.
 //!
-//! Sens requête : le header `Host:` de *chaque* requête d'une connexion
-//! keepalive est remplacé par le hostname réel de l'upstream. Indispensable
-//! quand l'upstream est un reverse-proxy (Caddy, Nginx, Traefik) qui route
-//! par Host header — sans cette réécriture, le RP voit `Host: 192.0.2.X:port`
-//! et tombe sur son vhost par défaut → 404. Le token de path éventuel est
-//! vérifié puis retiré, ou remplacé par le cookie de session (cf.
-//! [`PathAuth`]).
+//! Request direction: the `Host:` header of *every* request on a keep-alive
+//! connection is replaced with the real hostname of the upstream. Required
+//! when the upstream is a reverse proxy (Caddy, Nginx, Traefik) that routes
+//! by Host header: without this rewrite, the reverse proxy sees
+//! `Host: 192.0.2.X:port` and falls back to its default vhost -> 404. The
+//! path token, if any, is checked then stripped, or replaced by the session
+//! cookie (see [`PathAuth`]).
 //!
-//! Sens réponse (mode loopback) : les URLs absolues de l'upstream sont
-//! réécrites vers la base loopback dans `Location:` et dans les bodies
-//! textuels de taille raisonnable.
+//! Response direction (loopback mode): the upstream's absolute URLs are
+//! rewritten to the loopback base in `Location:` and in text bodies of
+//! reasonable size.
 //!
-//! Les bodies sont transmis selon leur framing (Content-Length, chunked) pour
-//! que la boucle reprenne pile sur le message suivant de la connexion.
+//! Bodies are forwarded according to their framing (Content-Length, chunked)
+//! so that the loop resumes exactly on the next message of the connection.
 
 use std::io;
 use std::sync::Arc;
@@ -24,23 +24,23 @@ use tokio::sync::mpsc;
 
 const MAX_HEADER_BUF: usize = 64 * 1024;
 
-/// Longueur max d'une ligne de framing chunked (taille + extensions, ou
-/// trailer). Borne la RAM face à un pair qui n'envoie jamais de CRLF.
+/// Maximum length of a chunked framing line (size + extensions, or trailer).
+/// Bounds RAM usage against a peer that never sends a CRLF.
 const MAX_CHUNK_LINE: usize = MAX_HEADER_BUF;
 
-/// Au-delà, un body réécrivable n'est plus bufferisé : il est streamé tel
-/// quel, sans réécriture. Borne la RAM par connexion (process en
-/// panic=abort : une allocation ratée tue toute l'app).
+/// Beyond this size, a rewritable body is no longer buffered: it is streamed
+/// as is, without rewriting. Bounds RAM per connection (the process runs with
+/// panic=abort: a failed allocation kills the whole app).
 pub(crate) const MAX_REWRITE_BODY: usize = 4 * 1024 * 1024;
 
-/// Traces HTTP détaillées (méthode, path sans query ni token, statut,
-/// tailles) en `log::trace!`. Off par défaut. Ne jamais y ajouter de
-/// cookies, de tokens, de `Location` ni d'extraits de body.
+/// Detailed HTTP traces (method, path without query or token, status, sizes)
+/// through `log::trace!`. Off by default. Never add cookies, tokens,
+/// `Location` values or body excerpts to them.
 const HTTP_TRACE: bool = false;
 
 const IO_BUF: usize = 16 * 1024;
 
-/// Cherche `\r\n\r\n` dans `haystack` et renvoie l'index juste après.
+/// Looks for `\r\n\r\n` in `haystack` and returns the index just after it.
 fn find_headers_end(haystack: &[u8]) -> Option<usize> {
     haystack
         .windows(4)
@@ -56,7 +56,7 @@ fn unexpected_eof(msg: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::UnexpectedEof, msg)
 }
 
-/// `Content-Length` strict : chiffres uniquement (pas de `+5`, pas de vide).
+/// Strict `Content-Length`: digits only (no `+5`, no empty value).
 fn parse_content_length(value: &[u8]) -> Option<u64> {
     let s = std::str::from_utf8(value).ok()?.trim();
     if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
@@ -71,17 +71,17 @@ fn mentions_chunked(value: &[u8]) -> bool {
         .unwrap_or(false)
 }
 
-/// Taille d'un chunk : `1*HEXDIG [ ";" extensions ]`.
+/// Chunk size: `1*HEXDIG [ ";" extensions ]`.
 fn parse_chunk_size(line: &[u8]) -> io::Result<u64> {
-    let line = std::str::from_utf8(line).map_err(|_| invalid_data("taille de chunk non ASCII"))?;
+    let line = std::str::from_utf8(line).map_err(|_| invalid_data("non-ASCII chunk size"))?;
     let size = line.split(';').next().unwrap_or("").trim();
     if size.is_empty() || !size.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(invalid_data("taille de chunk invalide"));
+        return Err(invalid_data("invalid chunk size"));
     }
-    u64::from_str_radix(size, 16).map_err(|_| invalid_data("taille de chunk hors limites"))
+    u64::from_str_radix(size, 16).map_err(|_| invalid_data("chunk size out of range"))
 }
 
-/// Détermine la longueur du body d'une requête HTTP/1.1 à partir des headers.
+/// Length of the body of an HTTP/1.1 request, determined from the headers.
 pub(crate) enum BodyLen {
     None,
     Fixed(u64),
@@ -112,27 +112,28 @@ fn body_length(headers: &[httparse::Header<'_>]) -> BodyLen {
     }
 }
 
-// ----- Lecture bufferisée + framing ------------------------------------------
+// ----- Buffered reading + framing --------------------------------------------
 
-/// Issue de l'accumulation des headers d'un message.
+/// Outcome of accumulating the headers of a message.
 enum Head {
-    /// Index juste après `\r\n\r\n` dans `BufIn::buf`.
+    /// Index just after `\r\n\r\n` in `BufIn::buf`.
     Complete(usize),
     TooLarge,
     Eof,
 }
 
-/// Body réécrivable lu en mémoire, ou abandonné en route parce qu'il
-/// dépasse [`MAX_REWRITE_BODY`].
+/// Rewritable body read into memory, or given up halfway because it exceeds
+/// [`MAX_REWRITE_BODY`].
 enum Collected {
     Complete(Vec<u8>),
-    /// Début du body déjà lu (décodé). Pour un body chunked, le flux est
-    /// arrêté pile sur la ligne de taille du chunk qui aurait fait déborder.
+    /// Start of the body already read (decoded). For a chunked body, the
+    /// stream is stopped exactly on the size line of the chunk that would
+    /// have overflowed.
     Overflow(Vec<u8>),
 }
 
-/// Lecteur bufferisé : `buf` contient les octets déjà lus mais pas encore
-/// consommés (fin des headers, début du body, message suivant en pipelining).
+/// Buffered reader: `buf` holds the bytes already read but not yet consumed
+/// (end of headers, start of the body, next message when pipelining).
 struct BufIn<R> {
     rd: R,
     buf: Vec<u8>,
@@ -144,7 +145,7 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
         Self::with_prefix(rd, Vec::with_capacity(IO_BUF))
     }
 
-    /// `prefix` : octets déjà lus sur `rd`, consommés en premier.
+    /// `prefix`: bytes already read from `rd`, consumed first.
     fn with_prefix(rd: R, prefix: Vec<u8>) -> Self {
         Self {
             rd,
@@ -153,14 +154,14 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
         }
     }
 
-    /// Une lecture, ajoutée à `buf`. 0 = EOF.
+    /// One read, appended to `buf`. 0 = EOF.
     async fn fill(&mut self) -> io::Result<usize> {
         let n = self.rd.read(&mut self.tmp).await?;
         self.buf.extend_from_slice(&self.tmp[..n]);
         Ok(n)
     }
 
-    /// Accumule jusqu'à la fin des headers (`\r\n\r\n`).
+    /// Accumulates up to the end of the headers (`\r\n\r\n`).
     async fn read_head(&mut self) -> io::Result<Head> {
         let mut scanned: usize = 0;
         loop {
@@ -178,8 +179,8 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
         }
     }
 
-    /// Renvoie l'index du prochain `\r\n` dans `buf` (la ligne est
-    /// `buf[..idx]`, rien n'est consommé).
+    /// Returns the index of the next `\r\n` in `buf` (the line is
+    /// `buf[..idx]`, nothing is consumed).
     async fn read_line(&mut self) -> io::Result<usize> {
         let mut scanned: usize = 0;
         loop {
@@ -189,29 +190,29 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
             }
             scanned = self.buf.len();
             if self.buf.len() > MAX_CHUNK_LINE {
-                return Err(invalid_data("ligne de framing chunked trop longue"));
+                return Err(invalid_data("chunked framing line too long"));
             }
             if self.fill().await? == 0 {
-                return Err(unexpected_eof("EOF dans le framing chunked"));
+                return Err(unexpected_eof("EOF in chunked framing"));
             }
         }
     }
 
-    /// Consomme le `\r\n` qui termine les données d'un chunk.
+    /// Consumes the `\r\n` that ends the data of a chunk.
     async fn take_crlf(&mut self) -> io::Result<()> {
         while self.buf.len() < 2 {
             if self.fill().await? == 0 {
-                return Err(unexpected_eof("EOF après les données d'un chunk"));
+                return Err(unexpected_eof("EOF after chunk data"));
             }
         }
         if &self.buf[..2] != b"\r\n" {
-            return Err(invalid_data("CRLF attendu après les données d'un chunk"));
+            return Err(invalid_data("CRLF expected after chunk data"));
         }
         self.buf.drain(..2);
         Ok(())
     }
 
-    /// Transmet exactement `n` octets vers `dst` sans les accumuler.
+    /// Forwards exactly `n` bytes to `dst` without accumulating them.
     async fn forward_exact<W: AsyncWrite + Unpin>(
         &mut self,
         dst: &mut W,
@@ -224,7 +225,7 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
         }
         let mut remaining = n - from_buf as u64;
         while remaining > 0 {
-            // Jamais plus que le body : la suite appartient au message suivant.
+            // Never more than the body: what follows belongs to the next message.
             let want = (self.tmp.len() as u64).min(remaining) as usize;
             let r = self.rd.read(&mut self.tmp[..want]).await?;
             if r == 0 {
@@ -236,7 +237,7 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
         Ok(())
     }
 
-    /// Lit exactement `n` octets dans `out`.
+    /// Reads exactly `n` bytes into `out`.
     async fn read_exact_into(&mut self, out: &mut Vec<u8>, n: usize) -> io::Result<()> {
         let from_buf = self.buf.len().min(n);
         out.extend_from_slice(&self.buf[..from_buf]);
@@ -254,8 +255,8 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
         Ok(())
     }
 
-    /// Transmet un body chunked tel quel (tailles, extensions, trailers) et
-    /// s'arrête pile à la fin du message.
+    /// Forwards a chunked body as is (sizes, extensions, trailers) and stops
+    /// exactly at the end of the message.
     async fn forward_chunked<W: AsyncWrite + Unpin>(&mut self, dst: &mut W) -> io::Result<()> {
         loop {
             let end = self.read_line().await?;
@@ -263,7 +264,7 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
             dst.write_all(&self.buf[..end + 2]).await?;
             self.buf.drain(..end + 2);
             if size == 0 {
-                // Trailers éventuels puis ligne vide finale.
+                // Optional trailers, then the final empty line.
                 loop {
                     let end = self.read_line().await?;
                     dst.write_all(&self.buf[..end + 2]).await?;
@@ -279,7 +280,7 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
         }
     }
 
-    /// Décode un body chunked tant qu'il tient dans `cap` (trailers ignorés).
+    /// Decodes a chunked body as long as it fits in `cap` (trailers ignored).
     async fn collect_chunked(&mut self, cap: usize) -> io::Result<Collected> {
         let mut body = Vec::new();
         loop {
@@ -296,8 +297,8 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
                 }
             }
             if body.len() as u64 + size > cap as u64 {
-                // Ligne de taille laissée dans `buf` : forward_chunked repart
-                // de ce chunk.
+                // Size line left in `buf`: forward_chunked resumes from this
+                // chunk.
                 return Ok(Collected::Overflow(body));
             }
             self.buf.drain(..end + 2);
@@ -306,7 +307,7 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
         }
     }
 
-    /// Lit jusqu'à EOF tant que ça tient dans `cap`.
+    /// Reads until EOF as long as it fits in `cap`.
     async fn collect_until_eof(&mut self, cap: usize) -> io::Result<Collected> {
         let mut body = std::mem::take(&mut self.buf);
         while body.len() <= cap {
@@ -319,7 +320,7 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
         Ok(Collected::Overflow(body))
     }
 
-    /// Bascule en copie brute pour le reste de la connexion.
+    /// Switches to raw copy for the rest of the connection.
     async fn copy_rest<W: AsyncWrite + Unpin>(&mut self, dst: &mut W) -> io::Result<()> {
         if !self.buf.is_empty() {
             dst.write_all(&self.buf).await?;
@@ -329,69 +330,69 @@ impl<R: AsyncRead + Unpin> BufIn<R> {
     }
 }
 
-/// Parse les headers, renvoie (octets réécrits, longueur du body restant à
-/// pomper depuis le client après l'éventuel chevauchement déjà bufferisé).
-/// Résultat de rewrite_and_split : la traduction réussie OU une indication
-/// que la requête a un token absent/invalide → la pipe doit close.
+/// Result of rewrite_and_split: the rewritten head (bytes to send upstream
+/// and length of the body still to pump from the client after any overlap
+/// already buffered), OR an indication that the request has a missing or
+/// invalid token -> the pipe must close.
 pub(crate) enum RewriteOutcome {
     Ok {
         rewritten: Vec<u8>,
         body_len: BodyLen,
-        /// Requête `Connection: upgrade` + `Upgrade:` (WebSocket, h2c) : la
-        /// suite de la connexion n'est plus du HTTP/1.1 si le serveur répond 101.
+        /// `Connection: upgrade` + `Upgrade:` request (WebSocket, h2c): the rest
+        /// of the connection is no longer HTTP/1.1 if the server answers 101.
         upgrade: bool,
-        /// Requête HEAD : sa réponse n'a jamais de body, quel que soit son
+        /// HEAD request: its response never has a body, whatever its
         /// Content-Length.
         is_head: bool,
-        /// Acceptée grâce au token, sans cookie de session valide : la
-        /// réponse doit poser le cookie.
+        /// Accepted thanks to the token, without a valid session cookie: the
+        /// response must set the cookie.
         set_cookie: bool,
     },
-    /// Parse échoué — caller fait un raw copy fallback.
+    /// Parsing failed: the caller falls back to a raw copy.
     NotHttp,
-    /// Ni token ni cookie de session valide alors qu'un token est exigé —
-    /// caller close.
+    /// Neither a valid token nor a valid session cookie while a token is
+    /// required: the caller closes.
     BadToken,
 }
 
-// ----- Contrôle d'accès loopback : token de path + cookie de session --------
+// ----- Loopback access control: path token + session cookie -----------------
 //
-// Le token dans le path isole le proxy des autres apps du téléphone (le
-// contrôle par UID est inopérant en loopback). Mais les webviews (jellyfin-web,
-// Nextcloud) chargent aussi des chemins absolus `/web/…` qui perdent le
-// préfixe `/<token>`. Une requête validée par le token reçoit donc un cookie
-// de session ; les requêtes qui le portent sont acceptées sans le préfixe. Le
-// secret est tiré au démarrage du proxy et ne vit qu'en mémoire : un
-// redémarrage invalide les cookies posés, la prochaine URL avec token les
-// renouvelle.
+// The token in the path isolates the proxy from the other apps on the phone
+// (UID checks do not work on loopback). But webviews (jellyfin-web,
+// Nextcloud) also load absolute paths `/web/...` that lose the `/<token>`
+// prefix. A request validated by the token therefore receives a session
+// cookie; requests that carry it are accepted without the prefix. The secret
+// is drawn when the proxy starts and lives only in memory: a restart
+// invalidates the cookies already set, and the next URL with the token
+// renews them.
 
-/// Préfixe du nom de nos cookies. Ils restent entre le client et le proxy :
-/// jamais transmis à l'upstream (ceux des autres proxys loopback non plus —
-/// les cookies de `127.0.0.1` sont partagés entre tous les ports).
+/// Name prefix of our cookies. They stay between the client and the proxy:
+/// never forwarded to the upstream (nor are those of the other loopback
+/// proxies, since `127.0.0.1` cookies are shared across all ports).
 const AUTH_COOKIE_PREFIX: &str = "mtlsb_";
 
-/// Octets aléatoires du secret de cookie (256 bits).
+/// Random bytes of the cookie secret (256 bits).
 const AUTH_COOKIE_SECRET_LEN: usize = 32;
 
-/// Motif d'un refus du contrôle d'accès (token de path / cookie de session),
-/// remonté dans l'audit. Ne porte volontairement ni le token, ni le cookie,
-/// ni le chemin de la requête refusée.
+/// Reason for an access-control rejection (path token / session cookie),
+/// reported in the audit. Deliberately carries neither the token, nor the
+/// cookie, nor the path of the refused request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum TokenRejection {
-    /// Requête HTTP sans token valide dans le path ni cookie de session valide.
+    /// HTTP request with neither a valid token in the path nor a valid session cookie.
     InvalidToken,
-    /// Flux qui n'est pas du HTTP/1.1 alors qu'un token est exigé.
+    /// Stream that is not HTTP/1.1 while a token is required.
     NotHttp,
-    /// Headers au-delà de la limite alors qu'un token est exigé.
+    /// Headers over the limit while a token is required.
     HeadersTooLarge,
 }
 
 impl std::fmt::Display for TokenRejection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::InvalidToken => "ni token ni cookie de session valide",
-            Self::NotHttp => "non-HTTP + token requis",
-            Self::HeadersTooLarge => "headers trop gros + token requis",
+            Self::InvalidToken => "no valid token or session cookie",
+            Self::NotHttp => "non-HTTP + token required",
+            Self::HeadersTooLarge => "headers too large + token required",
         })
     }
 }
@@ -404,25 +405,25 @@ impl From<TokenRejection> for io::Error {
     }
 }
 
-/// Refus du contrôle d'accès porté par une erreur des pipes, s'il y en a un.
+/// Access-control rejection carried by a pipe error, if any.
 pub(crate) fn token_rejection(e: &io::Error) -> Option<TokenRejection> {
     e.get_ref()?.downcast_ref::<TokenRejection>().copied()
 }
 
-/// Token de path exigé par un proxy loopback, et cookie de session qui le
-/// remplace une fois posé. Partagé par toutes les connexions du proxy.
+/// Path token required by a loopback proxy, and the session cookie that
+/// replaces it once set. Shared by all connections of the proxy.
 pub struct PathAuth {
     token: String,
     cookie_name: String,
     cookie_secret: String,
-    /// Valeur complète du header `Set-Cookie` à émettre.
+    /// Full value of the `Set-Cookie` header to emit.
     set_cookie: Arc<str>,
 }
 
 impl PathAuth {
-    /// `cookie_id` (l'id de la config) donne un nom de cookie distinct par
-    /// proxy : plusieurs proxys loopback tournent sur le même hôte
-    /// `127.0.0.1`, donc dans le même espace de cookies.
+    /// `cookie_id` (the config id) gives a distinct cookie name per proxy:
+    /// several loopback proxies run on the same host `127.0.0.1`, hence in
+    /// the same cookie space.
     pub fn new(token: &str, cookie_id: &str) -> io::Result<Self> {
         let short: String = cookie_id
             .chars()
@@ -441,8 +442,8 @@ impl PathAuth {
         })
     }
 
-    /// Un header `Cookie:` de la requête porte-t-il notre cookie avec le bon
-    /// secret ?
+    /// Does a `Cookie:` header of the request carry our cookie with the right
+    /// secret?
     fn has_valid_cookie(&self, headers: &[httparse::Header<'_>]) -> bool {
         let name = self.cookie_name.as_bytes();
         let mut found = false;
@@ -452,7 +453,7 @@ impl PathAuth {
             }
             for pair in h.value.split(|&b| b == b';') {
                 if let Some((n, v)) = split_cookie_pair(pair) {
-                    // Pas de court-circuit : temps indépendant de la position.
+                    // No short-circuit: timing independent of the position.
                     found |= n == name && ct_eq(v, self.cookie_secret.as_bytes());
                 }
             }
@@ -461,45 +462,45 @@ impl PathAuth {
     }
 }
 
-/// `nom=valeur` d'une paire de cookie, espaces autour retirés.
+/// `name=value` of a cookie pair, surrounding whitespace removed.
 fn split_cookie_pair(pair: &[u8]) -> Option<(&[u8], &[u8])> {
     let pair = pair.trim_ascii();
     let eq = pair.iter().position(|&b| b == b'=')?;
     Some((pair[..eq].trim_ascii(), pair[eq + 1..].trim_ascii()))
 }
 
-/// Comparaison en temps constant (à longueur égale) : le secret ne fuit pas
-/// par le temps de réponse.
+/// Constant-time comparison (for equal lengths): the secret does not leak
+/// through response timing.
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// `n` octets du CSPRNG (celui d'aws-lc, déjà embarqué par rustls), en hexa.
+/// `n` bytes from the CSPRNG (aws-lc's, already bundled by rustls), as hex.
 fn random_hex(n: usize) -> io::Result<String> {
     let mut bytes = vec![0u8; n];
     rustls::crypto::aws_lc_rs::default_provider()
         .secure_random
         .fill(&mut bytes)
-        .map_err(|_| io::Error::other("générateur aléatoire indisponible"))?;
+        .map_err(|_| io::Error::other("random generator unavailable"))?;
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Vérifie que `path` commence par `/<token>` suivi de `/`, `?` ou rien, et
-/// renvoie le path strippé (= ce qu'on enverra à l'upstream). Renvoie None
-/// si mismatch.
+/// Checks that `path` starts with `/<token>` followed by `/`, `?` or nothing,
+/// and returns the stripped path (= what is sent to the upstream). Returns
+/// None on mismatch.
 fn strip_path_token(path: &str, token: &str) -> Option<String> {
     let rest = path.strip_prefix('/')?.strip_prefix(token)?;
     if rest.is_empty() {
-        // /token → /
+        // /token -> /
         Some("/".to_string())
     } else if rest.starts_with('/') {
-        // /token/foo → /foo
+        // /token/foo -> /foo
         Some(rest.to_string())
     } else if rest.starts_with('?') {
-        // /token?x=1 → /?x=1 (base réécrite `http://127.0.0.1:P/token` + query)
+        // /token?x=1 -> /?x=1 (rewritten base `http://127.0.0.1:P/token` + query)
         Some(format!("/{rest}"))
     } else {
-        // /tokenXYZ : pas le bon segment.
+        // /tokenXYZ: not the right segment.
         None
     }
 }
@@ -508,8 +509,8 @@ fn is_wildcard_etag(value: &[u8]) -> bool {
     value.trim_ascii() == b"*"
 }
 
-/// `rewrites_responses` : la réponse passera par le pipe de réécriture (cf.
-/// [`http_request_pipe`]).
+/// `rewrites_responses`: the response will go through the rewriting pipe
+/// (see [`http_request_pipe`]).
 fn rewrite_and_split(
     headers_plus_maybe_body: &[u8],
     new_host: &str,
@@ -535,8 +536,8 @@ fn rewrite_and_split(
     let is_head = method == "HEAD";
     let safe_method = is_head || method == "GET";
 
-    // Si token configuré, vérifier ET stripper le préfixe avant tout. Sans
-    // préfixe, le cookie de session fait foi (chemins absolus des webviews).
+    // If a token is configured, check AND strip the prefix first. Without the
+    // prefix, the session cookie is authoritative (absolute paths of webviews).
     let (effective_path, set_cookie): (std::borrow::Cow<'_, str>, bool) = match auth {
         Some(a) => {
             let cookie_ok = a.has_valid_cookie(req.headers);
@@ -558,8 +559,8 @@ fn rewrite_and_split(
     out.extend_from_slice(b"\r\n");
 
     if HTTP_TRACE {
-        // Path déjà débarrassé du token ; la query peut porter des secrets
-        // (`api_key=` Jellyfin), on la coupe.
+        // Path already stripped of the token; the query may carry secrets
+        // (Jellyfin `api_key=`), so it is cut off.
         let path_only = effective_path.split('?').next().unwrap_or("");
         log::trace!("req: {method} {path_only}");
     }
@@ -574,10 +575,10 @@ fn rewrite_and_split(
             out.extend_from_slice(b"\r\n");
             host_done = true;
         } else if h.name.eq_ignore_ascii_case("cookie") {
-            // Retire nos cookies `mtlsb_*` et restaure les préfixes
-            // `__Host-`/`__Secure-` qu'on avait masqués pour le browser (cf.
-            // rewrite_set_cookie_outbound côté réponse). Plus rien : pas de
-            // header vide.
+            // Removes our `mtlsb_*` cookies and restores the `__Host-`/`__Secure-`
+            // prefixes that were masked for the browser (see
+            // rewrite_set_cookie_outbound on the response side). If nothing is
+            // left: no empty header.
             let forwarded = rewrite_cookie_inbound(h.value);
             if !forwarded.is_empty() {
                 out.extend_from_slice(b"Cookie: ");
@@ -585,23 +586,22 @@ fn rewrite_and_split(
                 out.extend_from_slice(b"\r\n");
             }
         } else if rewrites_responses && h.name.eq_ignore_ascii_case("accept-encoding") {
-            // On *force* identity côté upstream pour que la pipe de réponse
-            // puisse string-rewrite le body sans avoir à décompresser
-            // gzip/brotli/zstd. Coût bande passante négligeable pour les
-            // petits JSON/HTML d'auth ; les payloads volumineux (downloads
-            // média) ne sont de toute façon pas rewrités. Sans réécriture
-            // (VPN), la compression négociée par le client est gardée.
+            // *Force* identity on the upstream side so that the response pipe
+            // can string-rewrite the body without decompressing
+            // gzip/brotli/zstd. The bandwidth cost is negligible for small
+            // auth JSON/HTML; large payloads (media downloads) are not
+            // rewritten anyway. Without rewriting (VPN), the compression
+            // negotiated by the client is kept.
             continue;
         } else if rewrites_responses
             && safe_method
             && (h.name.eq_ignore_ascii_case("if-modified-since")
                 || (h.name.eq_ignore_ascii_case("if-none-match") && !is_wildcard_etag(h.value)))
         {
-            // Sur GET/HEAD seulement : pour que le serveur ne renvoie pas un
-            // 304 qui ferait resservir au browser une copie en cache
-            // antérieure à la réécriture. Sur PUT/MOVE/…, ces préconditions
-            // protègent contre l'écrasement (`If-None-Match: *` de WebDAV
-            // Nextcloud) : on les garde.
+            // On GET/HEAD only: so that the server does not return a 304 that
+            // would make the browser serve a cached copy from before the
+            // rewrite. On PUT/MOVE/etc., these preconditions protect against
+            // overwriting (Nextcloud WebDAV `If-None-Match: *`): they are kept.
             continue;
         } else {
             out.extend_from_slice(h.name.as_bytes());
@@ -628,7 +628,7 @@ fn rewrite_and_split(
     }
 }
 
-/// `Upgrade:` présent ET `Connection:` contenant le token `upgrade`.
+/// `Upgrade:` present AND `Connection:` containing the `upgrade` token.
 fn is_upgrade_request(headers: &[httparse::Header<'_>]) -> bool {
     let mut has_upgrade = false;
     let mut conn_upgrade = false;
@@ -650,9 +650,9 @@ fn is_upgrade_request(headers: &[httparse::Header<'_>]) -> bool {
     has_upgrade && conn_upgrade
 }
 
-/// Pipe per-requête : lit inbound, réécrit le Host header de CHAQUE requête
-/// HTTP/1.1 keepalive, transmet à upstream. Boucle jusqu'à EOF inbound ou
-/// erreur. Requêtes préparées pour une réponse réécrite (mode loopback).
+/// Per-request pipe: reads inbound, rewrites the Host header of EVERY
+/// keep-alive HTTP/1.1 request, forwards to upstream. Loops until inbound EOF
+/// or an error. Requests are prepared for a rewritten response (loopback mode).
 pub async fn http_pipe_with_host_rewrite<R, W>(
     inbound: R,
     upstream: W,
@@ -676,25 +676,25 @@ where
     .await
 }
 
-/// Ce que le pipe de réponse doit savoir de chaque requête, annoncé dans
-/// l'ordre des requêtes.
+/// What the response pipe needs to know about each request, announced in
+/// request order.
 #[derive(Debug, Default)]
 pub(crate) struct RequestMeta {
-    /// Requête HEAD : la réponse n'a jamais de body, quel que soit son
+    /// HEAD request: the response never has a body, whatever its
     /// Content-Length.
     pub is_head: bool,
-    /// `Set-Cookie` de session à ajouter à la réponse.
+    /// Session `Set-Cookie` to add to the response.
     pub set_cookie: Option<Arc<str>>,
 }
 
-/// Lit la première requête d'une connexion et applique le contrôle d'accès
-/// (token ou cookie de session) **sans rien transmettre**, pour que
-/// l'appelant n'ouvre la connexion upstream qu'une fois le client accepté.
+/// Reads the first request of a connection and applies access control (token
+/// or session cookie) **without forwarding anything**, so that the caller
+/// only opens the upstream connection once the client has been accepted.
 ///
-/// Renvoie les octets déjà lus, à rejouer en `prefix` de
-/// [`http_request_pipe`] (qui revalide la requête), ou `None` si le client a
-/// fermé avant une requête complète. Refus : `PermissionDenied` portant le
-/// [`TokenRejection`] (cf. [`token_rejection`]).
+/// Returns the bytes already read, to be replayed as the `prefix` of
+/// [`http_request_pipe`] (which validates the request again), or `None` if
+/// the client closed before a complete request. Rejection: `PermissionDenied`
+/// carrying the [`TokenRejection`] (see [`token_rejection`]).
 pub(crate) async fn read_first_request<R>(
     inbound: &mut R,
     auth: Option<&PathAuth>,
@@ -705,9 +705,9 @@ where
     let mut inb = BufIn::new(inbound);
     let rejection = match inb.read_head().await? {
         Head::Eof => return Ok(None),
-        // Sans token, rien à contrôler : le pipe basculera en copie brute.
+        // Without a token, nothing to check: the pipe will switch to raw copy.
         Head::TooLarge => auth.map(|_| TokenRejection::HeadersTooLarge),
-        // Seul le contrôle d'accès compte ici : la requête réécrite est jetée.
+        // Only access control matters here: the rewritten request is discarded.
         Head::Complete(end) => match rewrite_and_split(&inb.buf, "", end, auth, false) {
             RewriteOutcome::Ok { .. } => None,
             RewriteOutcome::NotHttp => auth.map(|_| TokenRejection::NotHttp),
@@ -720,14 +720,14 @@ where
     }
 }
 
-/// Comme [`http_pipe_with_host_rewrite`], en reprenant les octets déjà lus
-/// `prefix` et en annonçant sur `meta_tx`, dans l'ordre, ce que le pipe de
-/// réponse doit savoir de chaque requête.
+/// Like [`http_pipe_with_host_rewrite`], resuming from the already-read bytes
+/// `prefix` and announcing on `meta_tx`, in order, what the response pipe
+/// needs to know about each request.
 ///
-/// `rewrites_responses` : les réponses passent par [`http_response_pipe`]
-/// (mode loopback). Sinon (mode VPN, copie brute), la requête garde son
-/// `Accept-Encoding` et ses préconditions de cache, qui ne servent à rien
-/// d'autre qu'à la réécriture.
+/// `rewrites_responses`: responses go through [`http_response_pipe`]
+/// (loopback mode). Otherwise (VPN mode, raw copy), the request keeps its
+/// `Accept-Encoding` and its cache preconditions, which are only stripped
+/// for the sake of rewriting.
 pub(crate) async fn http_request_pipe<R, W>(
     inbound: R,
     prefix: Vec<u8>,
@@ -743,20 +743,20 @@ where
 {
     let mut inb = BufIn::with_prefix(inbound, prefix);
     loop {
-        // 1. Accumuler jusqu'à \r\n\r\n (fin de headers).
+        // 1. Accumulate up to \r\n\r\n (end of headers).
         let headers_end = match inb.read_head().await? {
             Head::Complete(p) => p,
             Head::TooLarge => {
-                // Headers trop gros — soit pas du HTTP, soit attaque. On forward
-                // brut et on quitte le mode rewrite. Si token configuré, ne pas
-                // fallback (l'attaque arrive depuis un client non autorisé).
+                // Headers too large: either not HTTP, or an attack. Forward raw
+                // and leave rewrite mode. If a token is configured, do not fall
+                // back (the attack comes from an unauthorized client).
                 if auth.is_some() {
                     return Err(TokenRejection::HeadersTooLarge.into());
                 }
                 return inb.copy_rest(&mut upstream).await;
             }
             Head::Eof => {
-                // EOF avant requête complète : on flush ce qu'il reste et on sort propre.
+                // EOF before a complete request: flush what is left and exit cleanly.
                 if !inb.buf.is_empty() && auth.is_none() {
                     upstream.write_all(&inb.buf).await?;
                 }
@@ -765,7 +765,7 @@ where
             }
         };
 
-        // 2. Parser + réécrire les headers (+ strip token si présent).
+        // 2. Parse + rewrite the headers (+ strip the token if present).
         let outcome = rewrite_and_split(&inb.buf, new_host, headers_end, auth, rewrites_responses);
         let (rewritten_headers, body_len, upgrade, meta) = match outcome {
             RewriteOutcome::Ok {
@@ -789,20 +789,20 @@ where
                 )
             }
             RewriteOutcome::BadToken => {
-                log::warn!("http_pipe: token mismatch — close fail-closed");
+                log::warn!("http_pipe: token mismatch, closing fail-closed");
                 return Err(TokenRejection::InvalidToken.into());
             }
             RewriteOutcome::NotHttp => {
                 if auth.is_some() {
-                    // Token configuré mais payload pas du HTTP/1.1 valide →
-                    // ne pas leaker vers l'upstream.
+                    // Token configured but the payload is not valid HTTP/1.1
+                    // -> do not leak it to the upstream.
                     return Err(TokenRejection::NotHttp.into());
                 }
                 log::warn!("http_pipe: parse headers failed, fallback raw copy");
                 return inb.copy_rest(&mut upstream).await;
             }
         };
-        // Annoncée AVANT l'envoi : la réponse ne peut pas arriver avant.
+        // Announced BEFORE sending: the response cannot arrive earlier.
         if let Some(tx) = &meta_tx {
             let _ = tx.send(meta);
         }
@@ -810,14 +810,14 @@ where
         inb.buf.drain(..headers_end);
 
         if upgrade {
-            // Handshake WebSocket (ou h2c) validé (token compris) : tout ce qui
-            // suit sont des trames, plus des requêtes HTTP/1.1. On ne cherche
-            // plus de `\r\n\r\n`, sinon les trames restent coincées ici.
+            // WebSocket (or h2c) handshake validated (token included): what
+            // follows are frames, no longer HTTP/1.1 requests. Stop looking
+            // for `\r\n\r\n`, otherwise the frames get stuck here.
             return inb.copy_rest(&mut upstream).await;
         }
 
-        // 3. Forward le body selon Content-Length / Transfer-Encoding, puis
-        //    requête suivante.
+        // 3. Forward the body according to Content-Length / Transfer-Encoding,
+        //    then move on to the next request.
         match body_len {
             BodyLen::None => {}
             BodyLen::Fixed(n) => inb.forward_exact(&mut upstream, n).await?,
@@ -828,28 +828,27 @@ where
 }
 
 // ============================================================================
-// Réponse upstream → client : réécriture des URLs absolues qui leakent depuis
-// le serveur (Location: + corps JSON/HTML). Indispensable pour les flows OAuth
-// type Nextcloud Login v2 où le serveur renvoie l'URL canonique upstream
-// (`https://media.example.com/...`) dans le body et les redirects — sans cette
-// réécriture, le navigateur de l'app cible tape directement sur le vrai
-// domaine et bypasse complètement notre proxy mTLS.
+// Upstream -> client response: rewriting of the absolute URLs that leak from
+// the server (Location: + JSON/HTML bodies). Required for OAuth flows such as
+// Nextcloud Login v2, where the server returns the canonical upstream URL
+// (`https://media.example.com/...`) in the body and in redirects. Without this
+// rewrite, the target app's browser goes straight to the real domain and
+// bypasses our mTLS proxy entirely.
 // ============================================================================
 
-/// Configuration de la réécriture de réponse. Liste de paires (canonique
-/// upstream → loopback). On supporte une liste pour les cas où Nextcloud
-/// émet plusieurs hostnames canoniques selon le contexte (ex. la valeur
-/// `overwrite.cli.url` est utilisée pour certaines URLs même quand le Host
-/// HTTP courant est différent).
+/// Response rewriting configuration: canonical upstream URLs -> loopback URL.
+/// A list is supported for cases where Nextcloud emits several canonical
+/// hostnames depending on the context (e.g. the `overwrite.cli.url` value is
+/// used for some URLs even when the current HTTP Host is different).
 #[derive(Clone, Debug)]
 pub struct ResponseRewrite {
     pub from_urls: Vec<String>,
     pub to_url: String,
 }
 
-/// Content-types dont on accepte de buffer + réécrire le body. Tout le reste
-/// (images, vidéos, octets, downloads) est streamé tel quel pour ne pas
-/// exploser la RAM.
+/// Content types whose body may be buffered + rewritten. Everything else
+/// (images, videos, octet streams, downloads) is streamed as is so as not to
+/// blow up RAM usage.
 fn is_rewritable_content_type(ct: &str) -> bool {
     let main = ct
         .split(';')
@@ -867,35 +866,35 @@ fn is_rewritable_content_type(ct: &str) -> bool {
             | "text/plain"
             | "text/xml"
             | "text/css"
-            // text/javascript : indispensable pour Nextcloud, qui embarque
-            // `OC.config.baseUrl="https://upstream"` dans son bundle JS — sans
-            // réécriture, les XHR/fetch frontend tapent direct sur l'upstream
-            // et déclenchent le prompt cert mTLS dans le navigateur.
+            // text/javascript: required for Nextcloud, which embeds
+            // `OC.config.baseUrl="https://upstream"` in its JS bundle. Without
+            // rewriting, frontend XHR/fetch calls hit the upstream directly
+            // and trigger the mTLS certificate prompt in the browser.
             | "text/javascript"
     )
 }
 
 // ----- Cookie name <-> proxy-safe rewrite -----------------------------------
 //
-// Le browser refuse les cookies préfixés `__Host-` ou `__Secure-` si la
-// réponse ne vient PAS d'un scheme « secure » (HTTPS). Notre downstream est
-// `http://127.0.0.1:<port>` → tous les cookies de Nextcloud (qui set
-// `__Host-nc_sameSiteCookielax` etc.) seraient silencieusement droppés par
-// Chrome. Conséquence : la session côté serveur reste sans ses cookies anti-
-// CSRF, et le `stateToken` du form de login ne matche jamais celui en session.
+// The browser rejects cookies prefixed with `__Host-` or `__Secure-` if the
+// response does NOT come from a "secure" scheme (HTTPS). Our downstream is
+// `http://127.0.0.1:<port>` -> every Nextcloud cookie (it sets
+// `__Host-nc_sameSiteCookielax` etc.) would be silently dropped by Chrome.
+// As a result, the server-side session would lack its anti-CSRF cookies, and
+// the `stateToken` of the login form would never match the one in session.
 //
-// Solution réversible : on **renomme** le préfixe avant émission vers le
-// browser, et on le **restaure** dans la requête vers l'upstream. Le browser
-// ne sait pas qu'il s'agissait d'un `__Host-`, l'upstream ne sait pas qu'on
-// l'a touché.
+// Reversible fix: the prefix is **renamed** before being sent to the
+// browser, and **restored** in the request to the upstream. The browser does
+// not know it was a `__Host-` cookie, the upstream does not know it was
+// touched.
 const PFX_HOST_ORIG: &str = "__Host-";
 const PFX_HOST_PROXY: &str = "nhx_";
 const PFX_SECURE_ORIG: &str = "__Secure-";
 const PFX_SECURE_PROXY: &str = "nsx_";
 
-/// Transforme un header `Set-Cookie` upstream → downstream : renomme les
-/// préfixes `__Host-`/`__Secure-` et supprime les attributs `Secure` et
-/// `Domain=` (incompatibles avec http://127.0.0.1).
+/// Transforms an upstream -> downstream `Set-Cookie` header: renames the
+/// `__Host-`/`__Secure-` prefixes and removes the `Secure` and `Domain=`
+/// attributes (incompatible with http://127.0.0.1).
 fn rewrite_set_cookie_outbound(value: &str) -> String {
     let (name_value, attrs) = match value.split_once(';') {
         Some((nv, rest)) => (nv, Some(rest)),
@@ -928,10 +927,10 @@ fn rewrite_set_cookie_outbound(value: &str) -> String {
     out
 }
 
-/// Transforme un header `Cookie:` downstream → upstream : retire nos cookies
-/// `mtlsb_*` (cf. [`PathAuth`]) et restaure les préfixes
-/// `__Host-`/`__Secure-` qu'on avait masqués pour le browser. Travaille sur
-/// les octets : une valeur non UTF-8 ne doit pas faire passer nos cookies.
+/// Transforms a downstream -> upstream `Cookie:` header: removes our `mtlsb_*`
+/// cookies (see [`PathAuth`]) and restores the `__Host-`/`__Secure-` prefixes
+/// that were masked for the browser. Works on bytes: a non-UTF-8 value must
+/// not let our cookies through.
 fn rewrite_cookie_inbound(value: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(value.len());
     for pair in value.split(|&b| b == b';') {
@@ -959,9 +958,9 @@ fn rewrite_cookie_inbound(value: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Encode `:` et `/` en percent-encoding pour matcher les `redirect_uri=`
-/// imbriqués dans une URL. On émet les variantes upper + lower pour couvrir
-/// les serveurs qui n'utilisent pas la casse RFC 3986.
+/// Percent-encodes `:` and `/` to match `redirect_uri=` values nested in a
+/// URL. Both upper- and lowercase variants are emitted to cover servers that
+/// do not use the RFC 3986 case.
 fn percent_encode_url(url: &str, upper: bool) -> String {
     let mut out = String::with_capacity(url.len() * 3);
     for c in url.chars() {
@@ -974,12 +973,12 @@ fn percent_encode_url(url: &str, upper: bool) -> String {
     out
 }
 
-/// Variantes de `from` → `to`, dans l'ordre d'application :
-/// - forme nue (`https://host/path`)
-/// - percent-encoded upper/lower (cas `redirect_uri=` imbriqué dans une URL),
-/// - JSON-escaped (`https:\/\/host\/path`) — PHP `json_encode` escape les
-///   slashes par défaut (sans `JSON_UNESCAPED_SLASHES`), c'est ce que renvoie
-///   Nextcloud sur `/index.php/login/v2`.
+/// Variants of `from` -> `to`, in order of application:
+/// - bare form (`https://host/path`)
+/// - percent-encoded upper/lower (a `redirect_uri=` nested in a URL),
+/// - JSON-escaped (`https:\/\/host\/path`): PHP `json_encode` escapes
+///   slashes by default (without `JSON_UNESCAPED_SLASHES`), which is what
+///   Nextcloud returns on `/index.php/login/v2`.
 fn url_variants(from: &str, to: &str) -> [(String, String); 4] {
     [
         (from.to_string(), to.to_string()),
@@ -1015,15 +1014,15 @@ fn hex_digit(b: u8) -> Option<u8> {
     (b as char).to_digit(16).map(|d| d as u8)
 }
 
-/// Les octets qui suivent une URL de base trouvée dans un texte la
-/// terminent-ils ? Faux s'ils prolongent l'autorité : `https://h` ne doit
-/// matcher ni `https://h.autre.com`, ni `https://h:8443`, ni `https://hx`,
-/// ni `https://h@ailleurs`, y compris en percent-encodé (`%3A8443`, `%2E`).
-/// Tout le reste termine l'URL de base : fin du texte, `/`, `?`, `#`,
-/// guillemets, espace, `&`, `<`, l'antislash de `\/` ou `\"` (JSON), les
-/// formes encodées `%2F`, `%3F`, `%22`…
+/// Do the bytes that follow a base URL found in a text terminate it? False if
+/// they extend the authority: `https://h` must match neither
+/// `https://h.other.com`, nor `https://h:8443`, nor `https://hx`, nor
+/// `https://h@elsewhere`, including percent-encoded (`%3A8443`, `%2E`).
+/// Everything else terminates the base URL: end of text, `/`, `?`, `#`,
+/// quotes, space, `&`, `<`, the backslash of `\/` or `\"` (JSON), the
+/// encoded forms `%2F`, `%3F`, `%22`, etc.
 fn ends_authority(rest: &[u8]) -> bool {
-    // Non réservés RFC 3986, `:` (port), `@` (userinfo), non-ASCII (IDN).
+    // RFC 3986 unreserved, `:` (port), `@` (userinfo), non-ASCII (IDN).
     fn continues(b: u8) -> bool {
         b.is_ascii_alphanumeric()
             || matches!(b, b'-' | b'.' | b'_' | b'~' | b':' | b'@')
@@ -1039,11 +1038,11 @@ fn ends_authority(rest: &[u8]) -> bool {
     }
 }
 
-/// Remplace chaque occurrence de l'URL de base `from` qui n'est pas le début
-/// d'une autre autorité (cf. [`ends_authority`]). `None` si aucune.
+/// Replaces every occurrence of the base URL `from` that is not the start of
+/// another authority (see [`ends_authority`]). `None` if there is none.
 fn replace_base_url(input: &[u8], from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
     let mut out: Option<Vec<u8>> = None;
-    // `input[..copied]` est déjà dans `out`.
+    // `input[..copied]` is already in `out`.
     let mut copied = 0;
     let mut search = 0;
     while let Some(p) = find_bytes(&input[search..], from) {
@@ -1064,14 +1063,13 @@ fn replace_base_url(input: &[u8], from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Réécrit toutes les variantes de chaque host canonique configuré
-/// (typiquement l'upstream + tout host additionnel que Nextcloud émet via
-/// `overwrite.cli.url` ou autre) vers `to`, au niveau des octets : un body
-/// non UTF-8 ressort intact en dehors des URLs remplacées. Seules les
-/// occurrences où l'autorité s'arrête sont remplacées (cf.
-/// [`ends_authority`]) : `https://h` ne touche ni `https://h:8443` ni
-/// `https://h.autre.com`, quel que soit l'ordre de `from_urls`. `None` si rien
-/// n'a changé.
+/// Rewrites every variant of each configured canonical host (typically the
+/// upstream + any additional host that Nextcloud emits through
+/// `overwrite.cli.url` or otherwise) to `to`, at the byte level: a non-UTF-8
+/// body comes out intact apart from the replaced URLs. Only occurrences where
+/// the authority ends are replaced (see [`ends_authority`]): `https://h`
+/// touches neither `https://h:8443` nor `https://h.other.com`, whatever the
+/// order of `from_urls`. `None` if nothing changed.
 pub(crate) fn rewrite_url_variants_bytes(
     input: &[u8],
     from_urls: &[String],
@@ -1090,11 +1088,11 @@ pub(crate) fn rewrite_url_variants_bytes(
     cur.filter(|out| out.as_slice() != input)
 }
 
-/// Variante `&str` pour les tests.
+/// `&str` variant for the tests.
 #[cfg(test)]
 pub(crate) fn rewrite_url_variants(input: &str, from: &str, to: &str) -> String {
     match rewrite_url_variants_bytes(input.as_bytes(), &[from.to_string()], to) {
-        Some(b) => String::from_utf8(b).expect("remplacement UTF-8 dans de l'UTF-8"),
+        Some(b) => String::from_utf8(b).expect("UTF-8 replacement within UTF-8"),
         None => input.to_string(),
     }
 }
@@ -1103,13 +1101,13 @@ enum RespBodyLen {
     None,
     Fixed(u64),
     Chunked,
-    /// Pas de Content-Length ni Transfer-Encoding : body jusqu'à EOF (HTTP/1.0
-    /// ou `Connection: close` côté upstream).
+    /// No Content-Length nor Transfer-Encoding: body until EOF (HTTP/1.0 or
+    /// `Connection: close` on the upstream side).
     UntilEof,
 }
 
-/// Header HTTP en données owned, pour relâcher le borrow sur le buffer
-/// d'origine quand on doit le drainer.
+/// HTTP header as owned data, to release the borrow on the original buffer
+/// when it has to be drained.
 struct OwnedHeader {
     name: String,
     value: Vec<u8>,
@@ -1149,8 +1147,8 @@ fn response_body_length_owned(
     method_was_head: bool,
     headers: &[OwnedHeader],
 ) -> RespBodyLen {
-    // RFC 9112 §6.3 : 1xx, 204, 304 et toutes les réponses à HEAD n'ont
-    // jamais de body, quoi qu'en dise Content-Length.
+    // RFC 9112 §6.3: 1xx, 204, 304 and every response to HEAD never have a
+    // body, whatever Content-Length says.
     if method_was_head || matches!(status, 100..=199 | 204 | 304) {
         return RespBodyLen::None;
     }
@@ -1174,9 +1172,9 @@ fn response_body_length_owned(
     }
 }
 
-/// Le body de cette réponse peut-il être bufferisé et réécrit ?
+/// Can the body of this response be buffered and rewritten?
 fn body_is_rewritable(head: &ResponseHead) -> bool {
-    // 206 : réécrire décalerait les octets annoncés par Content-Range.
+    // 206: rewriting would shift the bytes announced by Content-Range.
     if head.status == 206 {
         return false;
     }
@@ -1186,13 +1184,13 @@ fn body_is_rewritable(head: &ResponseHead) -> bool {
         if h.name.eq_ignore_ascii_case("content-type") {
             ct_ok = is_rewritable_content_type(value);
         } else if h.name.eq_ignore_ascii_case("content-encoding") {
-            // Serveur qui ignore notre `Accept-Encoding: identity` : un
-            // remplacement octet par octet corromprait le flux compressé.
+            // Server that ignores our `Accept-Encoding: identity`: a
+            // byte-level replacement would corrupt the compressed stream.
             if !value.eq_ignore_ascii_case("identity") {
                 return false;
             }
         } else if h.name.eq_ignore_ascii_case("transfer-encoding") {
-            // `gzip, chunked` & co : on ne sait décoder que `chunked` seul.
+            // `gzip, chunked` and the like: only `chunked` alone can be decoded.
             if !value.eq_ignore_ascii_case("chunked") {
                 return false;
             }
@@ -1202,10 +1200,10 @@ fn body_is_rewritable(head: &ResponseHead) -> bool {
 }
 
 enum HeadMode {
-    /// Body transmis tel quel : framing et en-têtes de cache d'origine.
+    /// Body forwarded as is: original framing and cache headers.
     Passthrough,
-    /// Body bufferisé, ré-émis avec un `Content-Length` recalculé. Si
-    /// `modified`, ses en-têtes de cache ne décrivent plus ce qu'on envoie.
+    /// Buffered body, re-emitted with a recomputed `Content-Length`. If
+    /// `modified`, its cache headers no longer describe what is sent.
     Buffered { len: usize, modified: bool },
 }
 
@@ -1216,7 +1214,7 @@ fn push_header(out: &mut Vec<u8>, name: &str, value: &[u8]) {
     out.extend_from_slice(b"\r\n");
 }
 
-/// `session_cookie` : valeur d'un `Set-Cookie` de session à ajouter (cf.
+/// `session_cookie`: value of a session `Set-Cookie` to add (see
 /// [`PathAuth`]).
 fn build_response_head(
     head: &ResponseHead,
@@ -1247,10 +1245,10 @@ fn build_response_head(
                 push_header(&mut out, &h.name, rewritten.as_deref().unwrap_or(&h.value));
             }
             "set-cookie" => {
-                // Renomme `__Host-X`/`__Secure-X` (rejetés par Chrome sur HTTP
-                // loopback) et strip `Secure`/`Domain=` pour que le browser
-                // accepte effectivement le cookie. Réinjecté tel quel dans le
-                // Cookie: header de la requête suivante (rewrite_cookie_inbound).
+                // Renames `__Host-X`/`__Secure-X` (rejected by Chrome over HTTP
+                // loopback) and strips `Secure`/`Domain=` so that the browser
+                // actually accepts the cookie. Put back as is in the Cookie:
+                // header of the next request (rewrite_cookie_inbound).
                 match std::str::from_utf8(&h.value) {
                     Ok(v) => {
                         push_header(&mut out, &h.name, rewrite_set_cookie_outbound(v).as_bytes())
@@ -1258,11 +1256,11 @@ fn build_response_head(
                     Err(_) => push_header(&mut out, &h.name, &h.value),
                 }
             }
-            // Framing remplacé par notre Content-Length.
+            // Framing replaced by our Content-Length.
             "content-length" | "transfer-encoding" if buffered_len.is_some() => {}
-            // Body réécrit : ces validateurs/durées décrivent la version
-            // upstream. Un asset réécrit mis en cache survivrait à un
-            // changement de config et resservirait une URL obsolète.
+            // Rewritten body: these validators/lifetimes describe the upstream
+            // version. A cached rewritten asset would survive a config change
+            // and keep serving a stale URL.
             "cache-control" | "etag" | "last-modified" | "expires" | "pragma" if modified => {}
             _ => push_header(&mut out, &h.name, &h.value),
         }
@@ -1280,9 +1278,9 @@ fn build_response_head(
     out
 }
 
-/// Pipe de réponse upstream → client avec réécriture, sans information sur
-/// les méthodes des requêtes (aucune réponse n'est traitée comme réponse à
-/// HEAD). Voir [`http_response_pipe`].
+/// Upstream -> client response pipe with rewriting, without information about
+/// the request methods (no response is treated as a response to HEAD). See
+/// [`http_response_pipe`].
 pub async fn http_response_pipe_with_rewrite<R, W>(
     upstream: R,
     downstream: W,
@@ -1296,17 +1294,17 @@ where
     http_response_pipe(upstream, downstream, rewrite, meta_rx).await
 }
 
-/// Pipe de réponse upstream → client avec réécriture optionnelle.
-/// Boucle sur les réponses HTTP/1.1 keepalive. Pour chaque réponse :
-/// - parse status + headers,
-/// - consomme sur `meta_rx` les infos de la requête correspondante (réponse
-///   finale uniquement) : une réponse à HEAD n'a pas de body, et le cookie
-///   de session éventuel est posé,
-/// - réécrit `Location:` value (string-replace from → to + percent-encoded),
-/// - si content-type est rewritable et le body tient dans
-///   [`MAX_REWRITE_BODY`], accumule le body, réécrit, recalcule
-///   `Content-Length`, supprime `Transfer-Encoding`,
-/// - sinon stream le body tel quel en respectant son framing.
+/// Upstream -> client response pipe with optional rewriting.
+/// Loops over keep-alive HTTP/1.1 responses. For each response:
+/// - parses status + headers,
+/// - consumes from `meta_rx` the info of the matching request (final
+///   response only): a response to HEAD has no body, and the session cookie
+///   is set if needed,
+/// - rewrites the `Location:` value (string replace from -> to + percent-encoded),
+/// - if the content type is rewritable and the body fits in
+///   [`MAX_REWRITE_BODY`], accumulates the body, rewrites it, recomputes
+///   `Content-Length` and removes `Transfer-Encoding`,
+/// - otherwise streams the body as is, respecting its framing.
 pub(crate) async fn http_response_pipe<R, W>(
     upstream: R,
     mut downstream: W,
@@ -1319,11 +1317,11 @@ where
 {
     let mut up = BufIn::new(upstream);
     loop {
-        // 1. Accumuler les headers de réponse.
+        // 1. Accumulate the response headers.
         let headers_end = match up.read_head().await? {
             Head::Complete(p) => p,
             Head::TooLarge => {
-                // Pas du HTTP propre — passthrough pour pas casser la connexion.
+                // Not clean HTTP: passthrough so as not to break the connection.
                 return up.copy_rest(&mut downstream).await;
             }
             Head::Eof => {
@@ -1335,18 +1333,18 @@ where
             }
         };
 
-        // 2. Parse status + headers en données owned, puis retire les headers
-        //    du buffer (il ne reste que le body et la suite).
+        // 2. Parse status + headers into owned data, then remove the headers
+        //    from the buffer (only the body and what follows remain).
         let Some(head) = parse_response_head(&up.buf[..headers_end]) else {
-            // Parse fail → passthrough pour rester safe.
+            // Parse failure -> passthrough to stay safe.
             log::warn!("http_response_pipe: parse fail, fallback raw copy");
             return up.copy_rest(&mut downstream).await;
         };
         up.buf.drain(..headers_end);
 
-        // 3. Une entrée par requête, consommée par la réponse finale (pas par
-        //    les 1xx intermédiaires). Réponse non sollicitée (408…) : file
-        //    vide → pas HEAD, pas de cookie.
+        // 3. One entry per request, consumed by the final response (not by
+        //    interim 1xx responses). Unsolicited response (408, etc.): empty
+        //    queue -> not HEAD, no cookie.
         let interim = (100..=199).contains(&head.status);
         let meta = if interim {
             RequestMeta::default()
@@ -1357,7 +1355,7 @@ where
         let session_cookie = meta.set_cookie.as_deref();
         let body_len = response_body_length_owned(head.status, is_head, &head.headers);
 
-        // 4. Body réécrivable et de taille raisonnable : on l'accumule.
+        // 4. Rewritable body of reasonable size: accumulate it.
         let collected = if body_is_rewritable(&head) {
             match body_len {
                 RespBodyLen::Fixed(n) if n <= MAX_REWRITE_BODY as u64 => {
@@ -1367,7 +1365,7 @@ where
                 }
                 RespBodyLen::Chunked => Some(up.collect_chunked(MAX_REWRITE_BODY).await?),
                 RespBodyLen::UntilEof => Some(up.collect_until_eof(MAX_REWRITE_BODY).await?),
-                // Pas de body (1xx/204/304/HEAD) ou trop gros : passthrough.
+                // No body (1xx/204/304/HEAD) or too large: passthrough.
                 RespBodyLen::None | RespBodyLen::Fixed(_) => None,
             }
         } else {
@@ -1399,14 +1397,14 @@ where
                 downstream.write_all(&body).await?;
                 downstream.flush().await?;
                 if matches!(body_len, RespBodyLen::UntilEof) {
-                    // Tout consommé jusqu'à EOF : la connexion est finie.
+                    // Everything consumed up to EOF: the connection is over.
                     return Ok(());
                 }
                 continue;
             }
             Some(Collected::Overflow(prefix)) => {
-                // Trop gros pour être réécrit : on ré-émet le début déjà lu
-                // puis on streame la suite, framing d'origine.
+                // Too large to be rewritten: re-emit the start already read,
+                // then stream the rest with the original framing.
                 downstream
                     .write_all(&build_response_head(
                         &head,
@@ -1433,8 +1431,8 @@ where
             None => {}
         }
 
-        // 5. Passthrough : headers (Location/Set-Cookie réécrits) puis body
-        //    tel quel.
+        // 5. Passthrough: headers (Location/Set-Cookie rewritten), then the
+        //    body as is.
         downstream
             .write_all(&build_response_head(
                 &head,
@@ -1446,8 +1444,8 @@ where
         match body_len {
             RespBodyLen::None => {
                 if head.status == 101 {
-                    // Switching Protocols (WebSocket…) : la suite n'est plus
-                    // du HTTP/1.1, on bascule en copie brute.
+                    // Switching Protocols (WebSocket, etc.): what follows is no
+                    // longer HTTP/1.1, switch to raw copy.
                     return up.copy_rest(&mut downstream).await;
                 }
             }
@@ -1464,7 +1462,7 @@ mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
 
-    /// Test E2E du pipe sur 2 requêtes keepalive consécutives.
+    /// End-to-end test of the pipe on 2 consecutive keep-alive requests.
     #[tokio::test]
     async fn rewrites_host_on_each_request_in_keepalive() {
         let req1 = b"GET /System/Info/Public HTTP/1.1\r\n\
@@ -1476,22 +1474,22 @@ mod tests {
         let mut input: Vec<u8> = Vec::new();
         input.extend_from_slice(req1);
         input.extend_from_slice(req2);
-        // Inutile de stocker `input` séparément — on l'écrit dans le duplex.
-        let _ = input; // assert mémoire pré-construite, sert juste de doc
+        // No need to keep `input` separately: it is written into the duplex.
+        let _ = input; // pre-built buffer, only serves as documentation
         let mut upstream: Vec<u8> = Vec::new();
         let (mut tx, rx) = tokio::io::duplex(8192);
         tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
             tx.write_all(req1).await.unwrap();
             tx.write_all(req2).await.unwrap();
-            drop(tx); // ferme côté écriture → EOF côté lecture
+            drop(tx); // closes the write side -> EOF on the read side
         });
         http_pipe_with_host_rewrite(rx, &mut upstream, "real.example.com", None)
             .await
             .unwrap();
         // upstream Vec<u8> holds the written bytes.
         let s = String::from_utf8(upstream).unwrap();
-        // Les deux requêtes doivent être présentes avec Host réécrit.
+        // Both requests must be present with the Host rewritten.
         assert_eq!(s.matches("Host: real.example.com\r\n").count(), 2, "{s}");
         assert!(!s.contains("192.0.2.1:5001"));
         assert!(s.contains("GET /System/Info/Public HTTP/1.1\r\n"));
@@ -1531,7 +1529,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
-        assert!(upstream.is_empty(), "rien ne doit avoir été forwardé");
+        assert!(upstream.is_empty(), "nothing must have been forwarded");
     }
 
     #[tokio::test]
@@ -1561,11 +1559,11 @@ mod tests {
         assert_eq!(strip_path_token("/", "TOK"), None);
     }
 
-    // Un test du `find_headers_end` direct, sans pipe.
+    // A direct test of `find_headers_end`, without a pipe.
     #[test]
     fn finds_headers_end_boundary() {
         let buf = b"GET / HTTP/1.1\r\nHost: x\r\n\r\nbody";
-        // \r\n\r\n termine à l'octet 27, body commence à 27.
+        // \r\n\r\n ends at byte 27, the body starts at 27.
         assert_eq!(find_headers_end(buf), Some(27));
         assert_eq!(&buf[27..], b"body");
     }
@@ -1581,8 +1579,8 @@ mod tests {
         }
     }
 
-    /// Cas typique Nextcloud Login v2 : réponse JSON avec Content-Length, deux
-    /// URLs absolues à réécrire vers la base loopback.
+    /// Typical Nextcloud Login v2 case: JSON response with Content-Length, two
+    /// absolute URLs to rewrite to the loopback base.
     #[tokio::test]
     async fn rewrites_json_body_with_content_length() {
         let body = br#"{"poll":{"endpoint":"https://media.example.com/index.php/login/v2/poll","token":"x"},"login":"https://media.example.com/index.php/login/v2/flow/y"}"#;
@@ -1612,7 +1610,7 @@ mod tests {
         );
         assert!(s.contains("http://127.0.0.1:13873/index.php/login/v2/flow/y"));
         assert!(!s.contains("https://media.example.com"));
-        // Content-Length doit être recalculé (corps plus court car http vs https).
+        // Content-Length must be recomputed (shorter body because of http vs https).
         let new_body = s.split("\r\n\r\n").nth(1).unwrap();
         let cl_line = s
             .lines()
@@ -1622,8 +1620,8 @@ mod tests {
         assert_eq!(cl, new_body.len());
     }
 
-    /// Cas OAuth Authentik : Location header avec `redirect_uri=` encodé.
-    /// Vérifie qu'on rewrite à la fois la forme nue ET la forme percent-encoded.
+    /// Authentik OAuth case: Location header with an encoded `redirect_uri=`.
+    /// Checks that both the bare form AND the percent-encoded form are rewritten.
     #[tokio::test]
     async fn rewrites_location_header_with_percent_encoded_url() {
         let resp = b"HTTP/1.1 302 Found\r\n\
@@ -1640,12 +1638,12 @@ mod tests {
             .await
             .unwrap();
         let s = String::from_utf8(downstream).unwrap();
-        // Le host Authentik n'est PAS touché (autre domaine).
+        // The Authentik host is NOT touched (different domain).
         assert!(
             s.contains("https://auth.example.com/application/"),
             "got: {s}"
         );
-        // Le redirect_uri imbriqué (percent-encoded) doit être réécrit.
+        // The nested (percent-encoded) redirect_uri must be rewritten.
         assert!(
             s.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A13873%2Fcallback"),
             "got: {s}"
@@ -1653,10 +1651,10 @@ mod tests {
         assert!(!s.contains("media.example.com"));
     }
 
-    /// Body chunked Caddy/Nginx : on accumule, rewrite, re-émet en Content-Length.
+    /// Caddy/Nginx chunked body: accumulated, rewritten, re-emitted with Content-Length.
     #[tokio::test]
     async fn rewrites_chunked_html_body() {
-        // On découpe le body en 2 chunks pour valider la concatenation correcte.
+        // The body is split into 2 chunks to check that concatenation is correct.
         let chunk1 = b"<a href=\"https://media.example";
         let chunk2 = b".com/foo\">click</a>";
         let mut response: Vec<u8> = Vec::new();
@@ -1683,12 +1681,12 @@ mod tests {
         let s = String::from_utf8(downstream).unwrap();
         assert!(s.contains("http://127.0.0.1:13873/foo"), "got: {s}");
         assert!(!s.contains("media.example.com"));
-        // Plus de Transfer-Encoding chunked en sortie.
+        // No more chunked Transfer-Encoding in the output.
         assert!(!s.to_lowercase().contains("transfer-encoding"), "got: {s}");
         assert!(s.contains("Content-Length:"));
     }
 
-    /// Content-type binaire : on passe tel quel, aucune réécriture.
+    /// Binary content type: passed through as is, no rewriting.
     #[tokio::test]
     async fn passthrough_binary_body() {
         let body: Vec<u8> = (0u8..255).collect();
@@ -1709,7 +1707,7 @@ mod tests {
         http_response_pipe_with_rewrite(rx, &mut downstream, &rw())
             .await
             .unwrap();
-        // On retrouve le body binaire intact à la fin.
+        // The binary body is found intact at the end.
         let split_pos = downstream
             .windows(4)
             .position(|w| w == b"\r\n\r\n")
@@ -1720,8 +1718,8 @@ mod tests {
         );
     }
 
-    /// Force Accept-Encoding: identity côté requête pour ne pas avoir à
-    /// décompresser les réponses qu'on veut rewrite.
+    /// Forces Accept-Encoding: identity on the request so that the responses
+    /// to be rewritten do not need decompressing.
     #[tokio::test]
     async fn forces_accept_encoding_identity_on_request() {
         let req = b"GET / HTTP/1.1\r\nHost: a\r\nAccept-Encoding: gzip, br\r\n\r\n";
@@ -1754,8 +1752,8 @@ mod tests {
         );
     }
 
-    /// Cas réel observé sur Nextcloud `/index.php/login/v2` : PHP `json_encode`
-    /// escape les slashes par défaut → `https:\/\/host\/path` au lieu de
+    /// Real case seen on Nextcloud `/index.php/login/v2`: PHP `json_encode`
+    /// escapes slashes by default -> `https:\/\/host\/path` instead of
     /// `https://host/path`.
     #[test]
     fn rewrite_url_variants_handles_json_escaped_slashes() {
@@ -1771,9 +1769,8 @@ mod tests {
         );
     }
 
-    /// Pompe la pipe de réponse sur `input` avec un timeout : une boucle
-    /// infinie (réponse ré-émise sans fin) fait échouer le test au lieu de
-    /// le bloquer.
+    /// Pumps the response pipe on `input` with a timeout: an infinite loop
+    /// (response re-emitted endlessly) fails the test instead of hanging it.
     async fn run_response_pipe(input: Vec<u8>) -> String {
         let (mut tx, rx) = tokio::io::duplex(64 * 1024);
         tokio::spawn(async move {
@@ -1787,14 +1784,14 @@ mod tests {
             http_response_pipe_with_rewrite(rx, &mut downstream, &rw()),
         )
         .await
-        .expect("la pipe de réponse doit se terminer (pas de boucle infinie)")
+        .expect("the response pipe must terminate (no infinite loop)")
         .unwrap();
         String::from_utf8(downstream).unwrap()
     }
 
-    /// Régression Jellyfin : `POST /Sessions/Playing/Progress` répond 204
-    /// sans body. La 204 doit être émise une seule fois et la réponse
-    /// suivante sur la même connexion keepalive doit passer.
+    /// Jellyfin regression: `POST /Sessions/Playing/Progress` answers 204
+    /// without a body. The 204 must be emitted exactly once and the next
+    /// response on the same keep-alive connection must get through.
     #[tokio::test]
     async fn no_body_response_emitted_once_then_next_response_flows() {
         let mut input = Vec::new();
@@ -1806,7 +1803,7 @@ mod tests {
         assert_eq!(s.matches("204 No Content").count(), 1, "got: {s}");
         assert_eq!(s.matches("200 OK").count(), 1, "got: {s}");
         assert!(s.ends_with("\r\n\r\n{}"), "got: {s}");
-        // Pas de Content-Length injecté sur la 204 (interdit par la RFC).
+        // No Content-Length injected on the 204 (forbidden by the RFC).
         let head_204 = s.split("HTTP/1.1 200").next().unwrap();
         assert!(
             !head_204.to_ascii_lowercase().contains("content-length"),
@@ -1814,7 +1811,7 @@ mod tests {
         );
     }
 
-    /// Même cas avec un content-type réécrivable sur la 204.
+    /// Same case with a rewritable content type on the 204.
     #[tokio::test]
     async fn rewritable_no_body_response_emitted_once() {
         let mut input = Vec::new();
@@ -1829,7 +1826,7 @@ mod tests {
         assert!(s.ends_with("\r\n\r\nok"), "got: {s}");
     }
 
-    /// 100 Continue intermédiaire puis réponse finale.
+    /// Interim 100 Continue, then the final response.
     #[tokio::test]
     async fn interim_100_continue_then_final_response() {
         let mut input = Vec::new();
@@ -1840,8 +1837,8 @@ mod tests {
         assert_eq!(s.matches("201 Created").count(), 1, "got: {s}");
     }
 
-    /// 101 Switching Protocols (WebSocket Jellyfin `/socket`) : la suite est
-    /// transmise telle quelle, même sans `\r\n\r\n`.
+    /// 101 Switching Protocols (Jellyfin WebSocket `/socket`): what follows is
+    /// forwarded as is, even without `\r\n\r\n`.
     #[tokio::test]
     async fn switching_protocols_switches_to_raw_passthrough() {
         let frames: &[u8] = &[0x81, 0x05, b'h', b'e', b'l', b'l', b'o', 0x89, 0x00];
@@ -1878,8 +1875,8 @@ mod tests {
         assert_eq!(&downstream[head_end..], frames);
     }
 
-    /// Requête WebSocket : après le handshake, les trames client sont
-    /// forwardées immédiatement (pas bufferisées en attente de `\r\n\r\n`).
+    /// WebSocket request: after the handshake, client frames are forwarded
+    /// immediately (not buffered while waiting for `\r\n\r\n`).
     #[tokio::test]
     async fn upgrade_request_switches_to_raw_copy() {
         let frames: &[u8] = &[0x81, 0x85, 1, 2, 3, 4, 0x69, 0x67, 0x6f, 0x68, 0x6e];
@@ -1911,13 +1908,13 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // HEAD, logs, cache, framing chunked, mémoire, token, sessions.
+    // HEAD, logs, cache, chunked framing, memory, token, sessions.
     // ------------------------------------------------------------------
 
     use std::sync::Arc;
     use std::time::Duration;
 
-    /// Pompe la pipe de requête (Host réécrit en `real`) avec un timeout.
+    /// Pumps the request pipe (Host rewritten to `real`) with a timeout.
     async fn pump_request(
         input: Vec<u8>,
         token: Option<&str>,
@@ -1943,12 +1940,12 @@ mod tests {
             http_request_pipe(rx, Vec::new(), &mut upstream, "real", auth, meta_tx, true),
         )
         .await
-        .expect("la pipe de requête doit se terminer");
+        .expect("the request pipe must terminate");
         (upstream, res)
     }
 
-    /// Pompe la pipe de réponse, `heads` = méthodes annoncées par le pipe
-    /// de requête (true = HEAD).
+    /// Pumps the response pipe, `heads` = methods announced by the request
+    /// pipe (true = HEAD).
     async fn pump_response(input: Vec<u8>, heads: &[bool]) -> (Vec<u8>, io::Result<()>) {
         let metas = heads
             .iter()
@@ -1979,7 +1976,7 @@ mod tests {
             http_response_pipe(rx, &mut downstream, &rw(), meta_rx),
         )
         .await
-        .expect("la pipe de réponse doit se terminer");
+        .expect("the response pipe must terminate");
         (downstream, res)
     }
 
@@ -1993,7 +1990,7 @@ mod tests {
         s.split("\r\n\r\n").next().unwrap()
     }
 
-    /// Décode un body chunked ; renvoie (payload, octets consommés).
+    /// Decodes a chunked body; returns (payload, bytes consumed).
     fn decode_chunked(mut data: &[u8]) -> (Vec<u8>, usize) {
         let total = data.len();
         let mut body = Vec::new();
@@ -2035,8 +2032,8 @@ mod tests {
 
     // ----- 1. HEAD ------------------------------------------------------
 
-    /// Une réponse à HEAD annonce un Content-Length sans body : la réponse
-    /// suivante de la connexion keepalive ne doit pas être avalée comme body.
+    /// A response to HEAD announces a Content-Length without a body: the next
+    /// response on the keep-alive connection must not be swallowed as a body.
     #[tokio::test]
     async fn head_response_content_length_announces_no_body() {
         let mut input = Vec::new();
@@ -2052,7 +2049,7 @@ mod tests {
         assert_eq!(s.matches("200 OK").count(), 2, "got: {s}");
         assert!(
             s.contains("Content-Length: 1234\r\n"),
-            "CL de HEAD transmis tel quel: {s}"
+            "HEAD Content-Length forwarded as is: {s}"
         );
         assert!(s.ends_with("\r\n\r\n{}"), "got: {s}");
     }
@@ -2073,7 +2070,7 @@ mod tests {
         assert_eq!(heads, [true, false, false]);
     }
 
-    /// Câblage complet : HEAD puis GET sur la même connexion via la session.
+    /// Full wiring: HEAD then GET on the same connection through the session.
     #[tokio::test]
     async fn session_handles_head_then_get_on_same_connection() {
         let (mut client, client_side) = tokio::io::duplex(64 * 1024);
@@ -2096,7 +2093,7 @@ mod tests {
             .write_all(b"HEAD /a HTTP/1.1\r\nHost: x\r\n\r\nGET /b HTTP/1.1\r\nHost: x\r\n\r\n")
             .await
             .unwrap();
-        // Le faux upstream ne répond qu'une fois les deux requêtes reçues.
+        // The fake upstream only answers once both requests have been received.
         let mut seen = Vec::new();
         let mut buf = [0u8; 4096];
         while seen.windows(4).filter(|w| *w == b"\r\n\r\n").count() < 2 {
@@ -2115,12 +2112,12 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), async {
             while !got.ends_with(b"{}") {
                 let n = client.read(&mut buf).await.unwrap();
-                assert!(n > 0, "EOF prématuré");
+                assert!(n > 0, "premature EOF");
                 got.extend_from_slice(&buf[..n]);
             }
         })
         .await
-        .expect("la réponse au GET doit arriver");
+        .expect("the response to the GET must arrive");
         let s = String::from_utf8(got).unwrap();
         assert_eq!(s.matches("200 OK").count(), 2, "got: {s}");
         session.abort();
@@ -2128,8 +2125,8 @@ mod tests {
 
     // ----- 2. Logs --------------------------------------------------------
 
-    /// Logger de test : chaque thread capture ses propres lignes (les tests
-    /// `#[tokio::test]` tournent sur un runtime current_thread).
+    /// Test logger: each thread captures its own lines (`#[tokio::test]` tests
+    /// run on a current_thread runtime).
     mod log_capture {
         use std::cell::RefCell;
         use std::sync::Once;
@@ -2176,7 +2173,7 @@ mod tests {
                     GET /SECRET-BAD HTTP/1.1\r\nHost: x\r\n\r\n"
             .to_vec();
         let (_, res) = pump_request(req, Some("SECRET-TOKEN"), None).await;
-        assert!(res.is_err(), "2e requête sans token refusée");
+        assert!(res.is_err(), "2nd request without token refused");
 
         let body = b"<a href=\"https://media.example.com/SECRET-BODY\">auth.example.com</a>";
         let resp = response_with_body(
@@ -2189,7 +2186,7 @@ mod tests {
 
         for line in log_capture::take() {
             for secret in ["SECRET", "api_key", "auth.example", "media.example"] {
-                assert!(!line.contains(secret), "log qui fuit `{secret}` : {line}");
+                assert!(!line.contains(secret), "log leaking `{secret}`: {line}");
             }
         }
     }
@@ -2226,7 +2223,7 @@ mod tests {
         let s = String::from_utf8(out).unwrap();
         let head = head_of(&s);
         for gone in ["ETag", "max-age", "Last-Modified", "Expires", "Pragma"] {
-            assert!(!head.contains(gone), "{gone} doit disparaître: {s}");
+            assert!(!head.contains(gone), "{gone} must be removed: {s}");
         }
         assert_eq!(head.matches("Cache-Control").count(), 1, "got: {s}");
         assert!(head.contains("Cache-Control: no-store"), "got: {s}");
@@ -2242,7 +2239,7 @@ mod tests {
         );
         let (out, res) = pump_response(input.clone(), &[]).await;
         res.unwrap();
-        assert!(out == input, "réponse non réécrite transmise telle quelle");
+        assert!(out == input, "non-rewritten response forwarded as is");
     }
 
     #[tokio::test]
@@ -2265,18 +2262,17 @@ mod tests {
         assert!(!req("/a").contains("If-None-Match"), "got: {s}");
         assert!(!req("/a").contains("If-Modified-Since"), "got: {s}");
         assert!(!req("/b").contains("If-None-Match"), "got: {s}");
-        // WebDAV Nextcloud : `If-None-Match: *` protège contre l'écrasement.
+        // Nextcloud WebDAV: `If-None-Match: *` protects against overwriting.
         assert!(req("/c").contains("If-None-Match: *"), "got: {s}");
         assert!(req("/d").contains("If-None-Match: \"v3\""), "got: {s}");
         assert!(req("/d").contains("If-Modified-Since: Sun"), "got: {s}");
         assert!(req("/e").contains("If-None-Match: *"), "got: {s}");
     }
 
-    // ----- 4. Framing chunked ----------------------------------------------
+    // ----- 4. Chunked framing ----------------------------------------------
 
-    /// Une réponse chunked non réécrivable est transmise octet pour octet
-    /// (trailers compris) et la boucle reprend : la réponse suivante est
-    /// encore réécrite.
+    /// A non-rewritable chunked response is forwarded byte for byte (trailers
+    /// included) and the loop resumes: the next response is still rewritten.
     #[tokio::test]
     async fn chunked_passthrough_response_keeps_the_response_loop() {
         let first: &[u8] =
@@ -2299,8 +2295,8 @@ mod tests {
         assert!(!rest.contains("media.example.com"), "got: {rest}");
     }
 
-    /// Après un body de requête chunked, les requêtes suivantes sont toujours
-    /// réécrites et le token toujours exigé.
+    /// After a chunked request body, the following requests are still
+    /// rewritten and the token is still required.
     #[tokio::test]
     async fn chunked_request_body_keeps_following_requests_rewritten() {
         let body: &[u8] = b"4;ext=1\r\nWiki\r\n5\r\npedia\r\n0\r\nX-Trailer: t\r\n\r\n";
@@ -2316,7 +2312,7 @@ mod tests {
         assert!(s.starts_with("POST /upload HTTP/1.1\r\n"), "got: {s}");
         assert!(
             s.contains(std::str::from_utf8(body).unwrap()),
-            "framing transmis tel quel: {s}"
+            "framing forwarded as is: {s}"
         );
         assert!(s.contains("GET /next HTTP/1.1\r\n"), "got: {s}");
         assert_eq!(s.matches("Host: real\r\n").count(), 2, "got: {s}");
@@ -2336,7 +2332,7 @@ mod tests {
         assert_eq!(res.unwrap_err().kind(), io::ErrorKind::InvalidData);
     }
 
-    // ----- 5. Mémoire -------------------------------------------------------
+    // ----- 5. Memory ---------------------------------------------------------
 
     #[tokio::test]
     async fn oversized_rewritable_body_is_streamed_unmodified() {
@@ -2345,7 +2341,7 @@ mod tests {
         let input = response_with_body("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n", &body);
         let (out, res) = pump_response(input.clone(), &[]).await;
         res.unwrap();
-        assert!(out == input, "au-delà du plafond : transmis tel quel");
+        assert!(out == input, "over the cap: forwarded as is");
     }
 
     #[tokio::test]
@@ -2369,7 +2365,7 @@ mod tests {
         let (decoded, used) = decode_chunked(&out[head_end..]);
         let mut expected = small.clone();
         expected.extend_from_slice(&big);
-        assert!(decoded == expected, "body transmis sans réécriture");
+        assert!(decoded == expected, "body forwarded without rewriting");
         assert_eq!(&out[head_end + used..], b"HTTP/1.1 204 No Content\r\n\r\n");
     }
 
@@ -2381,11 +2377,11 @@ mod tests {
         input.resize(input.len() + MAX_REWRITE_BODY, b'c');
         let (out, res) = pump_response(input.clone(), &[]).await;
         res.unwrap();
-        assert!(out == input, "au-delà du plafond : transmis tel quel");
+        assert!(out == input, "over the cap: forwarded as is");
     }
 
-    /// Content-Length géant venu du serveur : pas de pré-allocation (qui
-    /// aborterait le process), streaming jusqu'à l'EOF prématuré.
+    /// Huge Content-Length from the server: no pre-allocation (which would
+    /// abort the process), streaming until the premature EOF.
     #[tokio::test]
     async fn huge_content_length_is_not_preallocated() {
         let input = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
@@ -2413,7 +2409,7 @@ mod tests {
         assert_eq!(&out[head_end..], b"\xff\xfe http://127.0.0.1:13873/x \x80");
     }
 
-    // ----- 6. Token dans la base réécrite -----------------------------------
+    // ----- 6. Token in the rewritten base ------------------------------------
 
     #[test]
     fn strip_accepts_query_right_after_token() {
@@ -2428,7 +2424,7 @@ mod tests {
         let cfg = dummy_cfg("media.example.com", 443, Some("TOK"));
         let rw = crate::loopback::loopback_response_rewrite(&cfg, 4242);
         assert_eq!(rw.to_url, "http://127.0.0.1:4242/TOK");
-        // Chaque URL réécrite repasse le contrôle du token.
+        // Every rewritten URL passes the token check again.
         for url in [
             "https://media.example.com/index.php/login?x=1",
             "https://media.example.com",
@@ -2438,13 +2434,13 @@ mod tests {
                 rewrite_url_variants_bytes(url.as_bytes(), &rw.from_urls, &rw.to_url).unwrap();
             let out = String::from_utf8(out).unwrap();
             let path = out.strip_prefix("http://127.0.0.1:4242").unwrap();
-            assert!(strip_path_token(path, "TOK").is_some(), "{url} → {out}");
+            assert!(strip_path_token(path, "TOK").is_some(), "{url} -> {out}");
         }
         let rw = crate::loopback::loopback_response_rewrite(&dummy_cfg("h", 443, None), 4242);
         assert_eq!(rw.to_url, "http://127.0.0.1:4242");
     }
 
-    // ----- 7. Sessions : idle timeout, fermeture ----------------------------
+    // ----- 7. Sessions: idle timeout, closing --------------------------------
 
     #[tokio::test(start_paused = true)]
     async fn idle_session_is_closed_after_timeout() {
@@ -2461,7 +2457,7 @@ mod tests {
             "t",
         ));
         let mut buf = [0u8; 1024];
-        // Trafic toutes les 2 min : la session survit au-delà de 5 min cumulées.
+        // Traffic every 2 min: the session survives beyond 5 cumulative minutes.
         for _ in 0..3 {
             tokio::time::sleep(Duration::from_secs(120)).await;
             client
@@ -2470,22 +2466,22 @@ mod tests {
                 .unwrap();
             assert!(server.read(&mut buf).await.unwrap() > 0);
         }
-        assert!(!session.is_finished(), "session active fermée à tort");
-        // Puis plus rien : fermeture après 5 min.
+        assert!(!session.is_finished(), "active session wrongly closed");
+        // Then nothing more: closed after 5 min.
         tokio::time::sleep(Duration::from_secs(301)).await;
         tokio::time::timeout(Duration::from_secs(1), session)
             .await
-            .expect("session inactive non fermée")
+            .expect("idle session not closed")
             .unwrap();
         assert_eq!(
             client.read(&mut buf).await.unwrap(),
             0,
-            "le client voit la fermeture"
+            "the client sees the close"
         );
     }
 
-    /// Token refusé : la connexion client est fermée tout de suite, sans
-    /// attendre que l'upstream (qui n'a rien reçu) ferme de son côté.
+    /// Token refused: the client connection is closed right away, without
+    /// waiting for the upstream (which received nothing) to close its side.
     #[tokio::test]
     async fn bad_token_closes_session_without_waiting_for_upstream() {
         let (mut client, client_side) = tokio::io::duplex(4096);
@@ -2511,18 +2507,18 @@ mod tests {
             .unwrap();
         let rejected = tokio::time::timeout(Duration::from_secs(5), session)
             .await
-            .expect("session non fermée sur token invalide")
+            .expect("session not closed on invalid token")
             .unwrap();
         assert_eq!(
             rejected,
             Some(TokenRejection::InvalidToken),
-            "refus remonté pour l'audit"
+            "rejection reported for the audit"
         );
         let mut buf = [0u8; 16];
         assert_eq!(client.read(&mut buf).await.unwrap(), 0);
     }
 
-    // ----- 9. Cookie de session du token -------------------------------------
+    // ----- 9. Token session cookie ---------------------------------------------
 
     fn cookie_of(auth: &PathAuth) -> String {
         format!("{}={}", auth.cookie_name, auth.cookie_secret)
@@ -2545,7 +2541,7 @@ mod tests {
         assert!(a.cookie_secret.bytes().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(
             a.cookie_secret, b.cookie_secret,
-            "secret tiré à chaque démarrage"
+            "secret drawn at each start"
         );
         assert_eq!(
             &*a.set_cookie,
@@ -2553,9 +2549,9 @@ mod tests {
         );
     }
 
-    /// Webview : première page avec token → cookie posé ; ses chemins
-    /// absolus sans token passent grâce au cookie, qui n'atteint jamais
-    /// l'upstream.
+    /// Webview: first page with the token -> cookie set; its absolute paths
+    /// without the token get through thanks to the cookie, which never
+    /// reaches the upstream.
     #[tokio::test]
     async fn token_request_sets_cookie_then_cookie_alone_is_accepted() {
         let auth = PathAuth::new("TOK", "cfg1").unwrap();
@@ -2575,8 +2571,8 @@ mod tests {
         );
         assert!(s.contains("GET /web/main.js HTTP/1.1\r\n"), "got: {s}");
         assert!(s.contains("GET /api HTTP/1.1\r\n"), "got: {s}");
-        // Cookie retiré, les autres transmis (préfixe __Host- restauré) ;
-        // header supprimé quand il ne reste rien.
+        // Our cookie removed, the others forwarded (__Host- prefix restored);
+        // header removed when nothing is left.
         assert!(s.contains("Cookie: __Host-sess=1; lang=fr\r\n"), "got: {s}");
         assert_eq!(s.matches("Cookie:").count(), 1, "got: {s}");
         assert!(
@@ -2587,17 +2583,17 @@ mod tests {
         let metas = drain_metas(&mut rx);
         assert_eq!(metas.len(), 3);
         assert_eq!(metas[0].set_cookie.as_deref(), Some(&*auth.set_cookie));
-        assert!(metas[1].set_cookie.is_none(), "cookie déjà valide");
+        assert!(metas[1].set_cookie.is_none(), "cookie already valid");
         assert!(
             metas[2].set_cookie.is_none(),
-            "token + cookie valide : rien à reposer"
+            "token + valid cookie: nothing to set again"
         );
     }
 
     #[tokio::test]
     async fn missing_wrong_or_foreign_cookie_is_rejected() {
         let auth = PathAuth::new("TOK", "cfg1").unwrap();
-        let other = PathAuth::new("TOK", "cfg1").unwrap(); // proxy redémarré
+        let other = PathAuth::new("TOK", "cfg1").unwrap(); // restarted proxy
         let other_cfg = PathAuth::new("TOK", "cfg2").unwrap();
         let cases = [
             String::new(),
@@ -2618,15 +2614,12 @@ mod tests {
                 io::ErrorKind::PermissionDenied,
                 "{extra}"
             );
-            assert!(
-                out.is_empty(),
-                "rien ne doit partir vers l'upstream ({extra})"
-            );
+            assert!(out.is_empty(), "nothing must go to the upstream ({extra})");
         }
     }
 
-    /// Cookie périmé (proxy redémarré) + URL avec token : accepté, et un
-    /// cookie neuf est reposé.
+    /// Stale cookie (restarted proxy) + URL with the token: accepted, and a
+    /// fresh cookie is set.
     #[tokio::test]
     async fn stale_cookie_is_replaced_on_next_token_request() {
         let auth = PathAuth::new("TOK", "cfg1").unwrap();
@@ -2645,9 +2638,9 @@ mod tests {
         assert_eq!(metas[0].set_cookie.as_deref(), Some(&*auth.set_cookie));
     }
 
-    /// Les cookies `mtlsb_*` (les nôtres, ou ceux d'un autre proxy loopback
-    /// du même hôte 127.0.0.1) ne partent jamais vers l'upstream, même sans
-    /// token configuré et même dans un header non UTF-8.
+    /// `mtlsb_*` cookies (ours, or those of another loopback proxy on the same
+    /// host 127.0.0.1) never go to the upstream, even without a configured
+    /// token and even in a non-UTF-8 header.
     #[test]
     fn proxy_cookies_are_stripped_from_forwarded_cookie_header() {
         assert_eq!(
@@ -2669,9 +2662,9 @@ mod tests {
         assert!(s.contains("X-A: 1\r\n"), "got: {s}");
     }
 
-    /// Le `Set-Cookie` de session va sur la réponse finale de la requête
-    /// concernée (pas sur un 100 Continue), une seule fois, sans toucher
-    /// aux cookies de l'upstream.
+    /// The session `Set-Cookie` goes on the final response of the relevant
+    /// request (not on a 100 Continue), exactly once, without touching the
+    /// upstream's cookies.
     #[tokio::test]
     async fn response_pipe_adds_session_cookie_to_matching_response() {
         let auth = PathAuth::new("TOK", "cfg1").unwrap();
@@ -2699,7 +2692,7 @@ mod tests {
         let (interim, rest) = s.split_once("HTTP/1.1 200").unwrap();
         assert!(
             !interim.contains("Set-Cookie"),
-            "pas sur le 100 Continue: {s}"
+            "not on the 100 Continue: {s}"
         );
         let (first, second) = rest.split_once("HTTP/1.1 200").unwrap();
         assert!(first.contains(&line), "got: {s}");
@@ -2710,7 +2703,7 @@ mod tests {
         assert!(!second.contains("Set-Cookie"), "got: {s}");
     }
 
-    // ----- 10. Première requête lue avant la connexion upstream ------------
+    // ----- 10. First request read before the upstream connection -----------
 
     async fn first_request(input: &[u8], auth: Option<&PathAuth>) -> io::Result<Option<Vec<u8>>> {
         let (mut tx, mut rx) = tokio::io::duplex(64 * 1024);
@@ -2720,7 +2713,7 @@ mod tests {
         });
         tokio::time::timeout(Duration::from_secs(5), read_first_request(&mut rx, auth))
             .await
-            .expect("read_first_request doit se terminer")
+            .expect("read_first_request must terminate")
     }
 
     #[tokio::test]
@@ -2731,7 +2724,7 @@ mod tests {
             assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
             assert_eq!(token_rejection(&e), Some(reason));
         };
-        // Acceptées : les octets lus sont rendus tels quels (body compris).
+        // Accepted: the bytes read are returned as is (body included).
         let ok = b"POST /TOK/x HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi";
         assert_eq!(first_request(ok, Some(&auth)).await.unwrap().unwrap(), ok);
         let by_cookie = format!("GET /web HTTP/1.1\r\nCookie: {}\r\n\r\n", cookie_of(&auth));
@@ -2739,7 +2732,7 @@ mod tests {
             .await
             .unwrap()
             .is_some());
-        // Refusées.
+        // Refused.
         denied(
             first_request(b"GET /web HTTP/1.1\r\nHost: x\r\n\r\n", Some(&auth)).await,
             TokenRejection::InvalidToken,
@@ -2753,21 +2746,21 @@ mod tests {
             first_request(&huge, Some(&auth)).await,
             TokenRejection::HeadersTooLarge,
         );
-        // Client parti avant la fin des headers : rien.
+        // Client gone before the end of the headers: nothing.
         assert!(first_request(b"GET /TOK/x HTTP/1.1\r\nHo", Some(&auth))
             .await
             .unwrap()
             .is_none());
         assert!(first_request(b"", None).await.unwrap().is_none());
-        // Sans token, pas de contrôle : même un flux non HTTP passe.
+        // Without a token, no check: even a non-HTTP stream gets through.
         assert!(first_request(b"\x16\x03\x01garbage\r\n\r\n", None)
             .await
             .unwrap()
             .is_some());
     }
 
-    /// La session rejoue la première requête déjà lue avant de lire la suite
-    /// sur la socket client.
+    /// The session replays the already-read first request before reading the
+    /// rest from the client socket.
     #[tokio::test]
     async fn session_replays_pre_read_first_request() {
         let auth = PathAuth::new("TOK", "cfg1").unwrap();
@@ -2802,7 +2795,7 @@ mod tests {
             }
         })
         .await
-        .expect("les deux requêtes doivent atteindre l'upstream");
+        .expect("both requests must reach the upstream");
         let s = String::from_utf8(seen).unwrap();
         assert!(s.starts_with("GET /a HTTP/1.1\r\n"), "got: {s}");
         assert!(s.contains("GET /b HTTP/1.1\r\n"), "got: {s}");
@@ -2823,10 +2816,10 @@ mod tests {
         assert_eq!(rw.from_urls[0], "https://[::1]:8443");
     }
 
-    // ----- 11. Audit des refus de token ----------------------------------------
+    // ----- 11. Audit of token rejections ---------------------------------------
 
-    /// Les refus en cours de session keepalive portent aussi leur motif, et
-    /// une erreur d'E/S ordinaire n'est jamais prise pour un refus.
+    /// Rejections in the middle of a keep-alive session also carry their
+    /// reason, and an ordinary I/O error is never mistaken for a rejection.
     #[tokio::test]
     async fn keepalive_rejection_carries_its_reason() {
         let input =
@@ -2852,11 +2845,11 @@ mod tests {
         assert_eq!(token_rejection(&other), None);
     }
 
-    // ----- 12. Requête intacte sans réécriture de réponse (VPN) ---------------
+    // ----- 12. Untouched request without response rewriting (VPN) ------------
 
-    /// Sans réécriture de réponse (mode VPN), la compression négociée et les
-    /// préconditions de cache du client partent telles quelles. Avec (mode
-    /// loopback), `identity` est forcé et les préconditions des GET retirées.
+    /// Without response rewriting (VPN mode), the negotiated compression and
+    /// the client's cache preconditions go out as is. With it (loopback mode),
+    /// `identity` is forced and GET preconditions are removed.
     #[tokio::test]
     async fn request_encoding_untouched_when_responses_are_not_rewritten() {
         let req: &[u8] = b"GET /a HTTP/1.1\r\nHost: 192.0.2.1:5001\r\n\
@@ -2889,7 +2882,7 @@ mod tests {
                 }
             })
             .await
-            .expect("la requête doit atteindre l'upstream");
+            .expect("the request must reach the upstream");
             let s = String::from_utf8(seen).unwrap();
             assert!(s.contains("Host: real\r\n"), "got: {s}");
             if rewrite {
@@ -2907,12 +2900,12 @@ mod tests {
         }
     }
 
-    // ----- 13. Frontière de l'autorité dans la réécriture d'URL ---------------
+    // ----- 13. Authority boundary in URL rewriting ----------------------------
 
     #[test]
     fn base_url_only_matches_a_whole_authority() {
         let rewrite = |input: &str| rewrite_url_variants(input, "https://h.com", "http://L:1/T");
-        // L'autorité s'arrête là : remplacé.
+        // The authority ends here: replaced.
         for (input, expected) in [
             ("https://h.com", "http://L:1/T"),
             ("https://h.com/a", "http://L:1/T/a"),
@@ -2920,7 +2913,7 @@ mod tests {
             ("https://h.com#f", "http://L:1/T#f"),
             (r#"{"u":"https://h.com"}"#, r#"{"u":"http://L:1/T"}"#),
             ("href='https://h.com'", "href='http://L:1/T'"),
-            ("voir https://h.com ici", "voir http://L:1/T ici"),
+            ("see https://h.com here", "see http://L:1/T here"),
             ("a=https://h.com&b=1", "a=http://L:1/T&b=1"),
             (
                 "<d:href>https://h.com</d:href>",
@@ -2934,17 +2927,17 @@ mod tests {
         ] {
             assert_eq!(rewrite(input), expected, "{input}");
         }
-        // Une autre autorité qui commence pareil : intact.
+        // Another authority with the same beginning: untouched.
         for input in [
-            "https://h.com.autre.com/a",
+            "https://h.com.other.com/a",
             "https://h.com:8443/a",
             "https://h.comx/a",
             "https://h.com-cdn.net/a",
             "https://h.com_x/a",
-            "https://h.com@ailleurs.net/a",
-            "https://h.comé.fr/a",
+            "https://h.com@elsewhere.net/a",
+            "https://h.comü.de/a",
             "https://h.com%3A8443/a",
-            "https://h.com%2eautre.com/a",
+            "https://h.com%2eother.com/a",
         ] {
             assert_eq!(rewrite(input), input, "{input}");
         }
@@ -2953,7 +2946,7 @@ mod tests {
     #[test]
     fn base_url_boundary_applies_to_encoded_variants() {
         let rewrite = |input: &str| rewrite_url_variants(input, "https://h.com", "http://L:1/T");
-        // Percent-encodé (`redirect_uri=` imbriqué), majuscules et minuscules.
+        // Percent-encoded (nested `redirect_uri=`), upper and lower case.
         assert_eq!(
             rewrite("u=https%3A%2F%2Fh.com%2Fa&x"),
             "u=http%3A%2F%2FL%3A1%2FT%2Fa&x"
@@ -2966,11 +2959,11 @@ mod tests {
         for input in [
             "u=https%3A%2F%2Fh.com%3A8443%2Fa",
             "u=https%3a%2f%2fh.com%3a8443",
-            "u=https%3A%2F%2Fh.com.autre.com%2Fa",
+            "u=https%3A%2F%2Fh.com.other.com%2Fa",
         ] {
             assert_eq!(rewrite(input), input, "{input}");
         }
-        // Slashes échappés JSON (PHP `json_encode`).
+        // JSON-escaped slashes (PHP `json_encode`).
         assert_eq!(
             rewrite(r#"{"u":"https:\/\/h.com\/a"}"#),
             r#"{"u":"http:\/\/L:1\/T\/a"}"#
@@ -2981,18 +2974,18 @@ mod tests {
         );
         for input in [
             r#""https:\/\/h.com:8443\/a""#,
-            r#""https:\/\/h.com.autre.com\/a""#,
+            r#""https:\/\/h.com.other.com\/a""#,
         ] {
             assert_eq!(rewrite(input), input, "{input}");
         }
     }
 
-    /// Hosts canoniques qui se chevauchent (`https://h` de l'upstream sur 443
-    /// et `https://h:8443` en host additionnel) : chaque URL n'est réécrite
-    /// que par le sien, dans un ordre comme dans l'autre.
+    /// Overlapping canonical hosts (`https://h` for the upstream on 443 and
+    /// `https://h:8443` as an additional host): each URL is only rewritten by
+    /// its own, in either order.
     #[test]
     fn overlapping_canonical_hosts_do_not_clobber_each_other() {
-        let input = b"https://h:8443/a https://h/b https://h.autre/c";
+        let input = b"https://h:8443/a https://h/b https://h.other/c";
         for from in [
             ["https://h", "https://h:8443"],
             ["https://h:8443", "https://h"],
@@ -3001,7 +2994,7 @@ mod tests {
             let out = rewrite_url_variants_bytes(input, &from, "http://L").unwrap();
             assert_eq!(
                 String::from_utf8(out).unwrap(),
-                "http://L/a http://L/b https://h.autre/c"
+                "http://L/a http://L/b https://h.other/c"
             );
         }
     }

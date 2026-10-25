@@ -10,9 +10,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 /**
- * Reçoit l'action "Arrêter" des notifications de premier plan et stoppe le
- * service correspondant. Pas exporté → uniquement déclenchable par nos
- * propres PendingIntent.
+ * Receives the "Stop" action of the foreground notifications and stops the
+ * matching service. Not exported: it can only be triggered by our own
+ * PendingIntents.
  */
 class ProxyStopReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -22,15 +22,15 @@ class ProxyStopReceiver : BroadcastReceiver() {
             }
             ProxyNotifications.ACTION_STOP_LOOPBACK -> {
                 context.stopService(Intent(context, LoopbackProxyService::class.java))
-                // Sans ça `enabled` resterait vrai en base et le coordinator
-                // relancerait tous les proxies à la prochaine ouverture.
+                // Without this, `enabled` would stay true in the database and
+                // the coordinator would restart every proxy on the next launch.
                 val app = context.applicationContext as MtlsApplication
                 val pending = goAsync()
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
                         app.configRepo.disableAllLoopback()
                     } catch (t: Throwable) {
-                        Log.e("mtls_bridge.stop", "désactivation des loopbacks : ${t.message}", t)
+                        Log.e("mtls_bridge.stop", "disabling loopbacks: ${t.message}", t)
                     } finally {
                         pending.finish()
                     }

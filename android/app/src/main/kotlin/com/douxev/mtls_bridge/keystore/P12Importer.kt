@@ -29,24 +29,24 @@ data class P12ImportResult(
 }
 
 /**
- * Importe un .p12 dans le Keystore Android et renvoie la chaîne de certs
- * (PEM, leaf en premier) + le niveau d'attestation effectivement obtenu.
+ * Imports a .p12 into the Android Keystore and returns the cert chain
+ * (PEM, leaf first) + the attestation level actually obtained.
  *
- * Limites assumées :
- * - La clé est importée via `setKeyEntry`. Sur la plupart des devices Android
- *   modernes (API 28+ avec implémentation OEM correcte), elle finit
- *   hardware-backed via le mécanisme d'import-into-TEE du Keymint daemon.
- *   Sur les anciens devices ou ROMs custom, elle peut rester software-backed —
- *   on le signale via `securityLevel` pour que l'UI prévienne la doxev.
- * - Une fois importée, la clé est non-exportable. Aucun chemin de code ne peut
- *   en récupérer le matériel cryptographique.
+ * Accepted limitations:
+ * - The key is imported via `setKeyEntry`. On most modern Android devices
+ *   (API 28+ with a correct OEM implementation), it ends up hardware-backed
+ *   through the KeyMint daemon's import-into-TEE mechanism. On old devices or
+ *   custom ROMs it may stay software-backed; this is reported through
+ *   `securityLevel` so the UI can warn the user.
+ * - Once imported, the key is non-exportable. No code path can retrieve its
+ *   key material.
  */
 class P12Importer {
 
     /**
-     * @param expectedLeafCertPem si fourni, le cert feuille du .p12 doit être
-     *   identique (DER) au premier cert de ce PEM ; sinon on lève une erreur
-     *   **avant** toute écriture dans le Keystore.
+     * @param expectedLeafCertPem if provided, the leaf cert of the .p12 must be
+     *   identical (DER) to the first cert of this PEM; otherwise an error is
+     *   thrown **before** anything is written to the Keystore.
      */
     fun import(
         p12Bytes: ByteArray,
@@ -54,32 +54,32 @@ class P12Importer {
         keystoreAlias: String,
         expectedLeafCertPem: ByteArray? = null,
     ): P12ImportResult {
-        // 1. Parser le .p12 en mémoire.
+        // 1. Parse the .p12 in memory.
         val p12 = KeyStore.getInstance("PKCS12")
         p12.load(ByteArrayInputStream(p12Bytes), passphrase)
 
-        // Un .p12 peut contenir des entrées « certificat de confiance » (CA)
-        // avant l'entrée clé : on prend la première qui porte une clé privée.
+        // A .p12 may contain "trusted certificate" (CA) entries before the key
+        // entry: take the first one that holds a private key.
         val alias = p12.aliases().toList().firstOrNull { p12.isKeyEntry(it) }
-            ?: error("aucune clé privée dans le .p12")
+            ?: error("no private key in the .p12")
         val privateKey = p12.getKey(alias, passphrase) as? PrivateKey
-            ?: error("alias .p12 sans clé privée")
+            ?: error(".p12 alias without a private key")
         val chain: Array<X509Certificate> = (p12.getCertificateChain(alias) ?: emptyArray())
             .map { it as X509Certificate }
             .toTypedArray()
-        check(chain.isNotEmpty()) { "chaîne de certs vide dans le .p12" }
+        check(chain.isNotEmpty()) { "empty certificate chain in the .p12" }
         if (expectedLeafCertPem != null) {
             val expected = CertificateFactory.getInstance("X.509")
                 .generateCertificates(ByteArrayInputStream(expectedLeafCertPem))
                 .firstOrNull()
-                ?: error("cert attendu illisible")
+                ?: error("expected certificate is unreadable")
             check(expected.encoded.contentEquals(chain[0].encoded)) {
-                "le .p12 ne contient pas le même cert que celui de la config"
+                "the .p12 does not contain the same certificate as the config"
             }
         }
 
-        // 2. Préparer la KeyProtection — on demande le hardware quand dispo
-        //    et on autorise les schémas de signature TLS courants.
+        // 2. Prepare the KeyProtection: request hardware when available and
+        //    allow the common TLS signature schemes.
         val protection = KeyProtection.Builder(KeyProperties.PURPOSE_SIGN)
             .setDigests(
                 KeyProperties.DIGEST_SHA256,
@@ -93,9 +93,9 @@ class P12Importer {
             .setUserAuthenticationRequired(false)
             .build()
 
-        // 3. Importer dans AndroidKeyStore.
+        // 3. Import into AndroidKeyStore.
         val androidKs = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        // On efface une éventuelle entrée précédente avec ce même alias (édition d'une config).
+        // Delete any previous entry with the same alias (editing a config).
         if (androidKs.containsAlias(keystoreAlias)) {
             androidKs.deleteEntry(keystoreAlias)
         }
@@ -105,11 +105,11 @@ class P12Importer {
             protection,
         )
 
-        // 4. Inspecter le niveau d'attestation obtenu.
+        // 4. Inspect the attestation level obtained.
         val imported = androidKs.getKey(keystoreAlias, null) as PrivateKey
         val securityLevel = querySecurityLevel(imported)
 
-        // 5. Sérialiser la chaîne en PEM pour la passer au core Rust.
+        // 5. Serialize the chain as PEM to pass it to the Rust core.
         val certChainPem = chain.joinToString(separator = "\n") { certToPem(it) }
             .toByteArray(Charsets.US_ASCII)
 
@@ -119,8 +119,8 @@ class P12Importer {
     private fun querySecurityLevel(key: PrivateKey): KeySecurityLevel = try {
         val factory = KeyFactory.getInstance(key.algorithm, "AndroidKeyStore")
         val info = factory.getKeySpec(key, KeyInfo::class.java)
-        // KeyInfo.getSecurityLevel() existe en API 31+. Sur API 29/30 on
-        // retombe sur isInsideSecureHardware() (déprécié mais dispo).
+        // KeyInfo.getSecurityLevel() exists on API 31+. On API 29/30, fall
+        // back to isInsideSecureHardware() (deprecated but available).
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             when (info.securityLevel) {
                 KeyProperties.SECURITY_LEVEL_STRONGBOX -> KeySecurityLevel.STRONGBOX

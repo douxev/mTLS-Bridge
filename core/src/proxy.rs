@@ -21,29 +21,28 @@ use crate::http_rewrite::{
 };
 use crate::tls::build_client_config;
 
-/// Durée max d'un TCP connect upstream. Sans ça, un backend injoignable
-/// fait pendre la connexion ~75 s (timeout OS Linux) avant d'échouer —
-/// l'app cliente abandonne avant et on n'a rien dans les logs.
+/// Maximum duration of an upstream TCP connect. Without it, an unreachable
+/// backend leaves the connection hanging for ~75 s (Linux OS timeout) before
+/// failing: the client app gives up first and nothing shows up in the logs.
 const UPSTREAM_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Durée max d'un handshake TLS upstream. mTLS implique parfois plusieurs
-/// allers-retours signés par Keystore → plus large que pour du TLS classique.
+/// Maximum duration of an upstream TLS handshake. mTLS sometimes involves
+/// several round trips signed by the Keystore -> longer than for plain TLS.
 const UPSTREAM_TLS_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Une session sans aucun octet échangé, dans un sens comme dans l'autre,
-/// pendant ce délai est fermée : borne les sockets et sessions TLS orphelines
-/// quand le client ou l'upstream disparaît sans FIN (réseau mobile, app tuée).
+/// A session with no byte exchanged, in either direction, for this long is
+/// closed: this bounds orphaned sockets and TLS sessions when the client or
+/// the upstream disappears without a FIN (mobile network, killed app).
 const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Hôte sans crochets, pour le connect et le SNI (`[::1]` → `::1`).
+/// Host without brackets, for the connect and the SNI (`[::1]` -> `::1`).
 fn bare_host(host: &str) -> &str {
     host.strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host)
 }
 
-/// Hôte tel qu'il s'écrit dans une URL ou un header `Host:` : IPv6 littérale
-/// entre crochets.
+/// Host as written in a URL or a `Host:` header: IPv6 literal in brackets.
 pub(crate) fn url_host(host: &str) -> String {
     let bare = bare_host(host);
     if bare.contains(':') {
@@ -53,18 +52,18 @@ pub(crate) fn url_host(host: &str) -> String {
     }
 }
 
-/// Pont bidirectionnel entre une socket entrante (en clair) et un upstream mTLS.
+/// Bidirectional bridge between an incoming (plaintext) socket and an mTLS upstream.
 ///
-/// L'app cible parle HTTP/1.1 en clair côté entrée, c'est rustls qui chiffre
-/// en sortie avec le client cert. Voir [`bridge_session`].
+/// The target app speaks plaintext HTTP/1.1 on the inbound side; rustls
+/// encrypts on the outbound side with the client cert. See [`bridge_session`].
 ///
-/// Générique en `S` pour accepter `tokio::net::TcpStream` (mode loopback) et
-/// `netstack_smoltcp::TcpStream` (mode VPN). Les deux implémentent
+/// Generic over `S` to accept both `tokio::net::TcpStream` (loopback mode) and
+/// `netstack_smoltcp::TcpStream` (VPN mode). Both implement
 /// AsyncRead+AsyncWrite.
 ///
-/// Le cookie de session du token (cf. [`PathAuth`]) n'a ici de portée que
-/// la connexion : le mode loopback partage un [`PathAuth`] entre toutes ses
-/// connexions via [`bridge_session`].
+/// The token session cookie (see [`PathAuth`]) is scoped to the connection
+/// here: loopback mode shares one [`PathAuth`] across all its connections
+/// through [`bridge_session`].
 pub async fn bridge_to_mtls_upstream<S>(
     inbound: S,
     client_config: Arc<ClientConfig>,
@@ -72,8 +71,8 @@ pub async fn bridge_to_mtls_upstream<S>(
     response_rewrite: Option<ResponseRewrite>,
 ) -> Result<()>
 where
-    // Send + 'static : l'appelant spawn la session entière comme une tâche.
-    // TcpStream et netstack_smoltcp::TcpStream satisfont déjà.
+    // Send + 'static: the caller spawns the whole session as a task.
+    // TcpStream and netstack_smoltcp::TcpStream already satisfy this.
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let auth = cfg
@@ -92,13 +91,12 @@ where
     .map(|_| ())
 }
 
-/// Session d'un client : la première requête est lue et validée (token ou
-/// cookie de session) AVANT d'ouvrir la connexion upstream. Sinon n'importe
-/// quel client local déclenchait un connect + handshake mTLS — donc une
-/// signature avec la clé Keystore — sans le moindre contrôle.
+/// A client session: the first request is read and validated (token or
+/// session cookie) BEFORE the upstream connection is opened. Otherwise any
+/// local client could trigger a connect + mTLS handshake (and therefore a
+/// signature with the Keystore key) without any check.
 ///
-/// `Ok(Some(_))` : session coupée par le contrôle d'accès, que l'appelant
-/// audite.
+/// `Ok(Some(_))`: session cut by access control, which the caller audits.
 pub(crate) async fn bridge_session<S>(
     mut inbound: S,
     client_config: Arc<ClientConfig>,
@@ -112,17 +110,17 @@ where
     let first = tokio::time::timeout(IDLE_TIMEOUT, read_first_request(&mut inbound, auth)).await;
     let prefix = match first {
         Ok(Ok(Some(prefix))) => prefix,
-        // Fermé avant une requête complète : rien à transmettre.
+        // Closed before a complete request: nothing to forward.
         Ok(Ok(None)) => return Ok(None),
         Ok(Err(e)) => {
             if !is_benign_eof(&e) {
-                log::warn!("bridge {}: {e}, upstream non contacté", cfg.id);
+                log::warn!("bridge {}: {e}, upstream not contacted", cfg.id);
             }
             return Ok(token_rejection(&e));
         }
         Err(_) => {
             log::info!(
-                "bridge {}: aucune requête en {}s, fermeture",
+                "bridge {}: no request within {}s, closing",
                 cfg.id,
                 IDLE_TIMEOUT.as_secs(),
             );
@@ -131,7 +129,7 @@ where
     };
 
     let upstream = connect_upstream(client_config, cfg).await?;
-    log::info!("bridge {}: TLS OK, démarrage pipe per-request", cfg.id);
+    log::info!("bridge {}: TLS OK, starting per-request pipe", cfg.id);
     Ok(run_http_session(
         inbound,
         prefix,
@@ -145,7 +143,7 @@ where
     .await)
 }
 
-/// TCP connect + handshake mTLS vers l'upstream, bornés en temps.
+/// TCP connect + mTLS handshake to the upstream, both time-bounded.
 async fn connect_upstream(
     client_config: Arc<ClientConfig>,
     cfg: &ProxyConfig,
@@ -153,12 +151,12 @@ async fn connect_upstream(
     let host = bare_host(&cfg.upstream_host);
     let sni = cfg.sni.clone().unwrap_or_else(|| host.to_string());
     let server_name = ServerName::try_from(sni.clone())
-        .map_err(|e| CoreError::Config(format!("SNI invalide ({sni}): {e}")))?;
+        .map_err(|e| CoreError::Config(format!("invalid SNI ({sni}): {e}")))?;
 
     let upstream_addr = format!("{}:{}", url_host(host), cfg.upstream_port);
     log::info!("bridge {}: TCP connect {}", cfg.id, upstream_addr);
-    // Tuple (host, port) et non la chaîne `host:port` : une IPv6 littérale
-    // (`::1`, `2001:db8::1`) ne se parse pas sans crochets.
+    // A (host, port) tuple rather than the `host:port` string: an IPv6
+    // literal (`::1`, `2001:db8::1`) does not parse without brackets.
     let tcp = tokio::time::timeout(
         UPSTREAM_CONNECT_TIMEOUT,
         TcpStream::connect((host, cfg.upstream_port)),
@@ -166,11 +164,11 @@ async fn connect_upstream(
     .await
     .map_err(|_| {
         CoreError::Io(format!(
-            "TCP connect timeout après {}s vers {upstream_addr}",
+            "TCP connect timeout after {}s to {upstream_addr}",
             UPSTREAM_CONNECT_TIMEOUT.as_secs(),
         ))
     })??;
-    // Pas de Nagle : on veut que les petits paquets HTTP partent immédiatement.
+    // No Nagle: small HTTP packets must go out immediately.
     tcp.set_nodelay(true)?;
     log::info!("bridge {}: TCP OK, TLS handshake (SNI={sni})", cfg.id);
 
@@ -179,31 +177,31 @@ async fn connect_upstream(
         .await
         .map_err(|_| {
             CoreError::Tls(format!(
-                "TLS handshake timeout après {}s",
+                "TLS handshake timeout after {}s",
                 UPSTREAM_TLS_TIMEOUT.as_secs(),
             ))
         })??;
     Ok(upstream)
 }
 
-/// Pilote une session HTTP/1.1 client ↔ upstream :
-/// - client→upstream passe par le pipe de requête (réécrit le Host header de
-///   CHAQUE requête HTTP/1.1 — indispensable derrière un reverse-proxy
-///   Caddy/Nginx qui route par Host, sinon les requêtes keepalive après le
-///   splash retombent en 404 — et vérifie/retire le token de path ou le
-///   cookie de session),
-/// - upstream→client passe par le pipe de réponse si `response_rewrite`
-///   (mode loopback), sinon en copie brute (mode VPN).
+/// Drives a client <-> upstream HTTP/1.1 session:
+/// - client->upstream goes through the request pipe (rewrites the Host header
+///   of EVERY HTTP/1.1 request, which is required behind a Caddy/Nginx
+///   reverse proxy that routes by Host, otherwise keep-alive requests after
+///   the splash fall back to 404; it also checks/strips the path token or the
+///   session cookie),
+/// - upstream->client goes through the response pipe when `response_rewrite`
+///   is set (loopback mode), otherwise as a raw copy (VPN mode).
 ///
-/// `client_prefix` : octets déjà lus sur `client` (la première requête, lue
-/// avant la connexion upstream).
+/// `client_prefix`: bytes already read from `client` (the first request, read
+/// before the upstream connection).
 ///
-/// Les deux sens tournent dans la tâche appelante (pas de spawn) : annuler
-/// cette tâche ferme les deux sockets. La session se termine aussi après
-/// `idle_timeout` sans aucun trafic.
+/// Both directions run in the calling task (no spawn): cancelling that task
+/// closes both sockets. The session also ends after `idle_timeout` without
+/// any traffic.
 ///
-/// Renvoie le motif du refus si une requête de la session a été rejetée par
-/// le contrôle d'accès (token / cookie).
+/// Returns the rejection reason if a request of the session was refused by
+/// access control (token / cookie).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_http_session<C, U>(
     client: C,
@@ -222,15 +220,15 @@ where
     let activity = Arc::new(Activity::new());
     let (in_rd, mut in_wr) = tokio::io::split(Tracked::new(client, Arc::clone(&activity)));
     let (mut up_rd, up_wr) = tokio::io::split(Tracked::new(upstream, Arc::clone(&activity)));
-    // Infos de chaque requête, dans l'ordre : le pipe de réponse en a besoin
-    // pour savoir si un Content-Length annonce vraiment un body (HEAD) et
-    // s'il doit poser le cookie de session.
+    // Per-request info, in order: the response pipe needs it to know whether
+    // a Content-Length really announces a body (HEAD) and whether it must set
+    // the session cookie.
     let (meta_tx, meta_rx) = mpsc::unbounded_channel::<RequestMeta>();
 
-    // Renvoie le motif du refus si la session doit être coupée sans attendre
-    // la réponse.
+    // Returns the rejection reason if the session must be cut without waiting
+    // for the response.
     let req = async move {
-        // Sans pipe de réponse (copie brute), personne ne lirait la file.
+        // Without a response pipe (raw copy), nobody would read the queue.
         let rewrites_responses = response_rewrite.is_some();
         let meta_tx = response_rewrite.map(|_| meta_tx);
         let res = http_request_pipe(
@@ -249,18 +247,18 @@ where
                 if !is_benign_eof(&e) {
                     log::warn!("bridge {id}: req pipe err: {e}");
                 }
-                // Refus (token…) : l'upstream n'a rien reçu et ne répondra
-                // pas, inutile de garder le client en attente.
+                // Rejection (token, etc.): the upstream received nothing and
+                // will not answer, no point keeping the client waiting.
                 token_rejection(&e)
             }
         }
     };
     let resp = async move {
         let res = match response_rewrite {
-            // Pipe HTTP/1.1 per-response : réécrit les URLs absolues qui
-            // leakent depuis l'upstream (Location + bodies textuels).
-            // Indispensable pour les flows OAuth qui sérialisent l'URL
-            // upstream canonique dans le body ou les redirects.
+            // Per-response HTTP/1.1 pipe: rewrites the absolute URLs that
+            // leak from the upstream (Location + text bodies). Required for
+            // OAuth flows that serialize the canonical upstream URL in the
+            // body or in redirects.
             Some(rw) => http_response_pipe(&mut up_rd, &mut in_wr, rw, meta_rx).await,
             None => tokio::io::copy(&mut up_rd, &mut in_wr).await.map(|_| ()),
         };
@@ -278,8 +276,8 @@ where
             rejected = &mut req => Some(rejected),
             () = &mut resp => None,
         };
-        // Un EOF d'un côté ne suffit pas à clore l'autre direction (cas
-        // réponse longue après FIN client).
+        // An EOF on one side is not enough to close the other direction (a
+        // long response after the client's FIN).
         match req_first {
             Some(None) => {
                 resp.await;
@@ -293,7 +291,7 @@ where
         rejected = pipes => rejected,
         () = idle_watchdog(&activity, idle_timeout) => {
             log::info!(
-                "bridge {id}: aucune activité depuis {}s, fermeture",
+                "bridge {id}: no activity for {}s, closing",
                 idle_timeout.as_secs(),
             );
             None
@@ -301,14 +299,13 @@ where
     }
 }
 
-/// Résout quand l'arrêt est demandé (`true`) ou que l'émetteur a disparu
-/// (handle droppé).
+/// Resolves when a stop is requested (`true`) or when the sender is gone
+/// (handle dropped).
 pub(crate) async fn stop_requested(rx: &mut watch::Receiver<bool>) {
     let _ = rx.wait_for(|stop| *stop).await;
 }
 
-/// Instant du dernier octet lu ou écrit sur une session, dans un sens ou
-/// dans l'autre.
+/// Time of the last byte read or written on a session, in either direction.
 struct Activity {
     start: Instant,
     last_ms: AtomicU64,
@@ -334,7 +331,7 @@ impl Activity {
     }
 }
 
-/// Résout après `timeout` sans activité. Un réveil par période au plus.
+/// Resolves after `timeout` without activity. At most one wake-up per period.
 async fn idle_watchdog(activity: &Activity, timeout: Duration) {
     loop {
         let idle = activity.idle_for();
@@ -345,7 +342,7 @@ async fn idle_watchdog(activity: &Activity, timeout: Duration) {
     }
 }
 
-/// Stream qui horodate chaque lecture/écriture non vide dans [`Activity`].
+/// Stream that timestamps every non-empty read/write in [`Activity`].
 struct Tracked<T> {
     inner: T,
     activity: Arc<Activity>,
@@ -420,9 +417,9 @@ fn is_benign_eof(e: &std::io::Error) -> bool {
     )
 }
 
-/// Construit le `ClientConfig` rustls une fois pour toutes : le handshake TLS
-/// rejouera à chaque connexion, mais la racine de confiance et la chaîne client
-/// sont coûteuses à parser. L'appelant cache `Arc<ClientConfig>`.
+/// Builds the rustls `ClientConfig` once and for all: the TLS handshake is
+/// replayed on every connection, but the trust root and the client chain are
+/// expensive to parse. The caller caches the `Arc<ClientConfig>`.
 pub fn precompile_client_config(cfg: &ProxyConfig) -> Result<Arc<ClientConfig>> {
     build_client_config(cfg)
 }

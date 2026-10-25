@@ -14,12 +14,12 @@ pub mod vpn;
 
 use std::sync::Once;
 
-/// Installe `aws-lc-rs` comme provider crypto par défaut pour rustls.
-/// Idempotent : appelable en boucle, n'installe qu'au premier appel.
+/// Installs `aws-lc-rs` as the default crypto provider for rustls.
+/// Idempotent: can be called repeatedly, installs only on the first call.
 ///
-/// rustls 0.23 exige un provider installé explicitement avant tout build de
-/// `ClientConfig` / `ServerConfig`. Sinon : panic "no process-level
-/// CryptoProvider available" au premier handshake.
+/// rustls 0.23 requires a provider to be installed explicitly before any
+/// `ClientConfig` / `ServerConfig` is built. Otherwise it panics with "no
+/// process-level CryptoProvider available" on the first handshake.
 pub fn init_crypto_provider() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -27,9 +27,9 @@ pub fn init_crypto_provider() {
     });
 }
 
-/// Configure le logger Rust. Sur Android, route vers `adb logcat` (tag
-/// `mtls_bridge.rust`). Sur host (tests), route vers stderr via env_logger
-/// si dispo (sinon no-op). Idempotent.
+/// Configures the Rust logger. On Android, logs go to `adb logcat` (tag
+/// `mtls_bridge.rust`). On the host (tests), logs go to stderr through
+/// env_logger if available (no-op otherwise). Idempotent.
 #[uniffi::export]
 pub fn init_logging() {
     static ONCE: Once = Once::new();
@@ -47,7 +47,7 @@ pub fn init_logging() {
 
 #[uniffi::export]
 fn hello(name: String) -> String {
-    format!("Bonjour {name}, depuis le cœur Rust de mTLS Bridge")
+    format!("Hello {name}, from the mTLS Bridge Rust core")
 }
 
 #[uniffi::export]

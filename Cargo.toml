@@ -13,8 +13,8 @@ authors = ["Maelle <maelle@douxev.pro>"]
 opt-level = 3
 lto = "thin"
 codegen-units = 1
-# Pas de strip ici : uniffi-bindgen lit la métadonnée dans .symtab.
-# On strippera via `llvm-strip` après génération des bindings, dans le pipeline Gradle.
+# No strip here: uniffi-bindgen reads the metadata from .symtab.
+# Stripping is done with `llvm-strip` after the bindings are generated, in the Gradle pipeline.
 panic = "abort"
 
 [profile.dev]

@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Debug uniquement : sur Android 16, la restriction réseau local activée
-         via `adb shell am compat enable RESTRICT_LOCAL_NETWORK <pkg>` est
-         levée par NEARBY_WIFI_DEVICES (remplacée par ACCESS_LOCAL_NETWORK en
-         Android 17). Permet de tester la demande de permission sans
-         l'imposer aux builds release. -->
+    <!-- Debug only: on Android 16, the local network restriction enabled via
+         `adb shell am compat enable RESTRICT_LOCAL_NETWORK <pkg>` is lifted by
+         NEARBY_WIFI_DEVICES (replaced by ACCESS_LOCAL_NETWORK in Android 17).
+         Lets the permission request be tested without forcing it on release
+         builds. -->
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:maxSdkVersion="36"

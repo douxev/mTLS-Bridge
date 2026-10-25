@@ -34,8 +34,8 @@ class ConfigDetailViewModel(
         viewModelScope.launch { _config.value = repo.byId(configId) }
     }
 
-    /** Re-fournit le .p12 pour une config marquée needsKeystoreRefresh.
-     *  Renvoie null en cas de succès, sinon le message d'erreur. */
+    /** Provides the .p12 again for a config flagged needsKeystoreRefresh.
+     *  Returns null on success, otherwise the error message. */
     suspend fun reimportKey(p12Bytes: ByteArray, p12Passphrase: CharArray): String? = try {
         repo.reimportKey(configId, p12Bytes, p12Passphrase)
         _config.value = repo.byId(configId)
@@ -53,7 +53,7 @@ class ConfigDetailViewModel(
                         as MtlsApplication
                 val saved: SavedStateHandle = createSavedStateHandle()
                 val id = saved.get<String>(CONFIG_ID_KEY)
-                    ?: error("$CONFIG_ID_KEY manquant")
+                    ?: error("$CONFIG_ID_KEY missing")
                 ConfigDetailViewModel(id, app.configRepo, app.db.auditDao())
             }
         }

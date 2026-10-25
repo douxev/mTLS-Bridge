@@ -30,12 +30,12 @@ import com.douxev.mtls_bridge.ui.tv.isTelevision
 
 class MainActivity : ComponentActivity() {
 
-    // API 33+ : sans cette permission, la notification persistante du
-    // ForegroundService est silencieusement supprimée → la doxev ne voit
-    // pas que les proxies tournent ni le bouton "Arrêter" de la notif.
+    // API 33+: without this permission the foreground service's persistent
+    // notification is silently dropped, so the user cannot see that the
+    // proxies are running nor reach the notification's "Stop" button.
     private val requestNotifPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* result ignoré — l'utilisatrice peut refuser, on continue sans notif */ }
+    ) { /* Result ignored: the user may refuse, the app keeps working without notifications. */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -44,12 +44,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val isTv = isTelevision()
         setContent {
-            // Android TV : thème sombre (recommandation TV) et marges de
-            // sécurité contre l'overscan des téléviseurs.
+            // Android TV: dark theme (TV guideline) and safe-area margins
+            // against television overscan.
             MtlswrapTheme(darkTheme = isTv || isSystemInDarkTheme()) {
                 CompositionLocalProvider(LocalIsTv provides isTv) {
-                    // Edge-to-edge imposé en targetSdk 36 : les Scaffold gèrent barres
-                    // système et clavier, mais pas l'encoche latérale en paysage.
+                    // Edge-to-edge is mandatory with targetSdk 36: Scaffolds handle the
+                    // system bars and keyboard, but not a side display cutout in landscape.
                     Box(
                         Modifier
                             .fillMaxSize()

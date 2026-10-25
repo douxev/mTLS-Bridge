@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.douxev.mtls_bridge.MtlsApplication
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.data.CanonicalHosts
 import com.douxev.mtls_bridge.data.ProxyMode
 import com.douxev.mtls_bridge.ffi.LoopbackHandle
@@ -20,19 +21,19 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
- * Service de premier plan qui héberge **N** proxies loopback en parallèle,
- * un par config en mode loopback `enabled`. Reçoit des intents :
- *  - `ACTION_START_FOR` avec `EXTRA_CONFIG_ID` → démarre/ré-active le proxy
- *    de cette config (idempotent : no-op si déjà actif).
- *  - `ACTION_STOP_FOR` avec `EXTRA_CONFIG_ID` → arrête le proxy de cette
- *    config et son AuditLogger.
- *  - intent `null` (redémarrage START_STICKY) → relance les configs enabled.
+ * Foreground service hosting **N** loopback proxies in parallel, one per
+ * `enabled` loopback-mode config. Handles these intents:
+ *  - `ACTION_START_FOR` with `EXTRA_CONFIG_ID`: starts/re-enables the proxy
+ *    of this config (idempotent: no-op if already running).
+ *  - `ACTION_STOP_FOR` with `EXTRA_CONFIG_ID`: stops the proxy of this config
+ *    and its AuditLogger.
+ *  - `null` intent (START_STICKY restart): restarts the enabled configs.
  *
- * Les commandes passent par une file traitée **une par une** dans l'ordre
- * d'arrivée : un STOP ne peut plus doubler un START encore en cours (proxy
- * orphelin) ni deux START créer deux proxies pour la même config. Quand la
- * map devient vide, `stopSelf(startId)` : n'arrête le service que si aucune
- * commande plus récente n'est arrivée entre-temps.
+ * Commands go through a queue processed **one at a time** in arrival order:
+ * a STOP can no longer overtake a START still in progress (orphan proxy), and
+ * two STARTs cannot create two proxies for the same config. When the map
+ * becomes empty, `stopSelf(startId)` only stops the service if no newer
+ * command has arrived in the meantime.
  */
 class LoopbackProxyService : LifecycleService() {
 
@@ -42,8 +43,8 @@ class LoopbackProxyService : LifecycleService() {
     ) {
         fun shutdown() {
             handle.stop()
-            // Libère l'objet uniffi tout de suite (Drop côté Rust → abort de
-            // la tâche d'accept) au lieu d'attendre le GC.
+            // Release the uniffi object right away (Drop on the Rust side
+            // aborts the accept task) instead of waiting for the GC.
             handle.close()
             audit.stop()
         }
@@ -55,8 +56,8 @@ class LoopbackProxyService : LifecycleService() {
     private data class Restore(override val startId: Int) : Command
     private data class Noop(override val startId: Int) : Command
 
-    // Modifiée uniquement sur le main thread (consommateur de [commands] et
-    // onDestroy) : pas besoin de synchronisation.
+    // Only modified on the main thread (consumer of [commands] and
+    // onDestroy): no synchronization needed.
     private val proxies = mutableMapOf<String, RunningProxy>()
     private val commands = Channel<Command>(Channel.UNLIMITED)
 
@@ -74,12 +75,12 @@ class LoopbackProxyService : LifecycleService() {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (t: Throwable) {
-                    Log.e(TAG, "commande $cmd en échec : ${t.message}", t)
+                    Log.e(TAG, "command $cmd failed: ${t.message}", t)
                 }
                 if (proxies.isEmpty()) {
                     stopSelf(cmd.startId)
                 } else {
-                    enterForeground() // rafraîchit le compteur de la notification
+                    enterForeground() // refreshes the notification counter
                 }
             }
         }
@@ -93,8 +94,9 @@ class LoopbackProxyService : LifecycleService() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         if (intent == null) {
-            // Redémarrage sticky après kill du process : le service se resynchronise
-            // seul avec la base. Peut être refusé en arrière-plan (Android 12+).
+            // Sticky restart after the process was killed: the service resyncs
+            // with the database on its own. May be refused in the background
+            // (Android 12+).
             if (!enterForeground()) {
                 stopSelf(startId)
                 return START_NOT_STICKY
@@ -106,14 +108,14 @@ class LoopbackProxyService : LifecycleService() {
         val cmd = when {
             configId == null -> Noop(startId)
             intent.action == ACTION_START_FOR -> {
-                // Lancé par startForegroundService : startForeground() obligatoire ici.
+                // Started by startForegroundService: startForeground() is mandatory here.
                 enterForeground()
                 Start(configId, startId)
             }
-            // Lancé par startService : pas de notification pour un simple arrêt.
+            // Started by startService: no notification for a mere stop.
             intent.action == ACTION_STOP_FOR -> Stop(configId, startId)
             else -> {
-                Log.w(TAG, "action inconnue : ${intent.action}")
+                Log.w(TAG, "unknown action: ${intent.action}")
                 Noop(startId)
             }
         }
@@ -121,12 +123,12 @@ class LoopbackProxyService : LifecycleService() {
         return START_STICKY
     }
 
-    /** @return false si l'OS refuse le passage au premier plan. */
+    /** @return false if the OS refuses to move the service to the foreground. */
     private fun enterForeground(): Boolean {
         val n = ProxyNotifications.buildLoopback(
             this,
-            title = "Proxies mTLS",
-            text = "${proxies.size} actif(s)",
+            title = getString(R.string.svc_loopback_notif_title),
+            text = getString(R.string.svc_loopback_notif_text, proxies.size),
         )
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -140,8 +142,8 @@ class LoopbackProxyService : LifecycleService() {
             }
             true
         } catch (e: IllegalStateException) {
-            // ForegroundServiceStartNotAllowedException (API 31+) en est une sous-classe.
-            Log.w(TAG, "startForeground refusé : ${e.message}")
+            // ForegroundServiceStartNotAllowedException (API 31+) is a subclass of it.
+            Log.w(TAG, "startForeground refused: ${e.message}")
             false
         }
     }
@@ -155,26 +157,26 @@ class LoopbackProxyService : LifecycleService() {
 
     private suspend fun startProxyFor(configId: String) {
         if (proxies.containsKey(configId)) {
-            Log.d(TAG, "proxy $configId déjà actif — no-op")
+            Log.d(TAG, "proxy $configId already running, no-op")
             return
         }
         val app = application as MtlsApplication
         val cfg = app.configRepo.byId(configId) ?: run {
-            Log.e(TAG, "config $configId introuvable, abandon")
+            Log.e(TAG, "config $configId not found, giving up")
             return
         }
         if (cfg.targetPackage.isBlank()) {
-            Log.e(TAG, "config $configId sans targetPackage, abandon")
+            Log.e(TAG, "config $configId has no targetPackage, giving up")
             return
         }
         if (cfg.needsKeystoreRefresh) {
-            Log.e(TAG, "config $configId sans clé Keystore, abandon")
+            Log.e(TAG, "config $configId has no Keystore key, giving up")
             return
         }
         val targetUid = runCatching {
             packageManager.getApplicationInfo(cfg.targetPackage, 0).uid.toUInt()
         }.getOrElse {
-            Log.e(TAG, "uid introuvable pour ${cfg.targetPackage}")
+            Log.e(TAG, "uid not found for ${cfg.targetPackage}")
             return
         }
         val audit = AuditLoggerImpl(
@@ -201,12 +203,12 @@ class LoopbackProxyService : LifecycleService() {
                 audit = audit,
             )
             proxies[configId] = RunningProxy(handle, audit)
-            Log.i(TAG, "proxy démarré pour $configId — port=${handle.port()}")
+            Log.i(TAG, "proxy started for $configId, port=${handle.port()}")
         } catch (e: CancellationException) {
             audit.stop()
             throw e
         } catch (t: Throwable) {
-            Log.e(TAG, "échec startLoopbackProxy pour $configId : ${t.message}", t)
+            Log.e(TAG, "startLoopbackProxy failed for $configId: ${t.message}", t)
             audit.stop()
         }
     }
@@ -214,7 +216,7 @@ class LoopbackProxyService : LifecycleService() {
     private fun stopProxyFor(configId: String) {
         val rp = proxies.remove(configId) ?: return
         rp.shutdown()
-        Log.i(TAG, "proxy stoppé pour $configId")
+        Log.i(TAG, "proxy stopped for $configId")
     }
 
     override fun onDestroy() {

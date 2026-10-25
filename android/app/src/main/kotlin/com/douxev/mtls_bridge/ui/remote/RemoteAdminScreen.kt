@@ -40,6 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,15 +49,16 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.remote.RemoteAdminServer
 import com.douxev.mtls_bridge.runtime.LocalNetworkAccess
 import com.douxev.mtls_bridge.ui.tv.tvFocusHighlight
 
 /**
- * Écran « Configuration à distance » : affiche l'adresse HTTPS de la console,
- * un QR code et le PIN d'appairage. Tant qu'il est ouvert, l'écran reste
- * allumé (sinon l'écran de veille d'Android TV le masquerait au milieu de la
- * saisie sur l'ordinateur).
+ * "Remote configuration" screen: shows the console's HTTPS address, a QR code
+ * and the pairing PIN. While it is open the screen stays on (otherwise the
+ * Android TV screensaver would hide it in the middle of typing on the
+ * computer).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,9 +69,9 @@ fun RemoteAdminScreen(
     val status by vm.status.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    // Android 17 : sans ACCESS_LOCAL_NETWORK, l'OS bloque les réponses de
-    // l'app vers les autres appareils du LAN (constaté y compris en
-    // targetSdk 36) — la page ne charge jamais dans le navigateur.
+    // Android 17: without ACCESS_LOCAL_NETWORK, the OS blocks the app's
+    // responses to other devices on the LAN (observed even with
+    // targetSdk 36), so the page never loads in the browser.
     val localNetPermission = remember { LocalNetworkAccess.runtimePermission() }
     var localNetGranted by remember { mutableStateOf(LocalNetworkAccess.isGranted(context)) }
     val requestLocalNet = rememberLauncherForActivityResult(
@@ -77,7 +80,7 @@ fun RemoteAdminScreen(
     LaunchedEffect(Unit) {
         if (localNetPermission != null && !localNetGranted) requestLocalNet.launch(localNetPermission)
     }
-    // Retour des réglages système : la permission a pu y être accordée.
+    // Back from system settings: the permission may have been granted there.
     LifecycleResumeEffect(Unit) {
         localNetGranted = LocalNetworkAccess.isGranted(context)
         onPauseOrDispose { }
@@ -104,10 +107,10 @@ fun RemoteAdminScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Configuration à distance") },
+                title = { Text(stringResource(R.string.remote_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
             )
@@ -131,7 +134,7 @@ fun RemoteAdminScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         QrCode(qr, size = 240.dp)
                         Text(
-                            "Scanne avec le téléphone",
+                            stringResource(R.string.remote_scan_hint),
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(top = 8.dp),
                         )
@@ -178,14 +181,12 @@ private fun ColumnScope.Details(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "Accès au réseau local nécessaire",
+                    stringResource(R.string.remote_local_network_title),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )
                 Text(
-                    "Android bloque les réponses de l'app vers les autres appareils du " +
-                        "réseau tant que la permission « Appareils à proximité » n'est pas " +
-                        "accordée : la page ne se chargera pas dans le navigateur.",
+                    stringResource(R.string.remote_local_network_text),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onErrorContainer,
                 )
@@ -193,33 +194,30 @@ private fun ColumnScope.Details(
                     Button(
                         onClick = localNet.onRequest,
                         modifier = Modifier.tvFocusHighlight(ButtonDefaults.shape),
-                    ) { Text("Autoriser") }
+                    ) { Text(stringResource(R.string.remote_allow)) }
                     OutlinedButton(
                         onClick = localNet.onOpenSettings,
                         modifier = Modifier.tvFocusHighlight(ButtonDefaults.outlinedShape),
-                    ) { Text("Ouvrir les réglages") }
+                    ) { Text(stringResource(R.string.remote_open_settings)) }
                 }
             }
         }
     }
     Text(
-        "Ouvre l'adresse ci-dessous dans le navigateur d'un ordinateur ou d'un " +
-            "smartphone connecté au même réseau, puis saisis le PIN. Tu pourras y " +
-            "créer, modifier et activer les configs, déposer le .p12, la CA ou un " +
-            "bundle de déploiement.",
+        stringResource(R.string.remote_intro),
         style = MaterialTheme.typography.bodyLarge,
     )
 
     when {
-        status.starting -> Text("Démarrage…", style = MaterialTheme.typography.bodyLarge)
+        status.starting -> Text(stringResource(R.string.remote_starting), style = MaterialTheme.typography.bodyLarge)
         !status.running -> {
             Text(
-                status.error ?: "Console arrêtée.",
+                status.error ?: stringResource(R.string.remote_stopped),
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyLarge,
             )
             Button(onClick = vm::restart, modifier = Modifier.tvFocusHighlight(ButtonDefaults.shape)) {
-                Text("Relancer la console")
+                Text(stringResource(R.string.remote_restart))
             }
         }
         else -> {
@@ -228,10 +226,10 @@ private fun ColumnScope.Details(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("Adresse", style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.remote_address), style = MaterialTheme.typography.labelLarge)
                     if (status.urls.isEmpty()) {
                         Text(
-                            "Aucune adresse réseau locale : connecte l'appareil au Wi-Fi ou à l'Ethernet.",
+                            stringResource(R.string.remote_no_address),
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
@@ -243,7 +241,7 @@ private fun ColumnScope.Details(
                             color = MaterialTheme.colorScheme.primary,
                         )
                     }
-                    Text("PIN d'appairage", style = MaterialTheme.typography.labelLarge)
+                    Text(stringResource(R.string.remote_pin), style = MaterialTheme.typography.labelLarge)
                     Text(
                         status.pin.chunked(3).joinToString(" "),
                         fontFamily = FontFamily.Monospace,
@@ -252,7 +250,7 @@ private fun ColumnScope.Details(
                         letterSpacing = 4.sp,
                     )
                     Text(
-                        "Usage unique : un nouveau PIN s'affiche après chaque appairage.",
+                        stringResource(R.string.remote_pin_single_use),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -267,12 +265,9 @@ private fun ColumnScope.Details(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    Text("Avertissement du navigateur", style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.remote_browser_warning_title), style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "La console utilise un certificat généré sur cet appareil : le " +
-                            "navigateur signale une connexion « non privée ». Vérifie que " +
-                            "l'empreinte SHA-256 affichée par le navigateur commence comme " +
-                            "celle-ci avant de continuer :",
+                        stringResource(R.string.remote_browser_warning_text),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
@@ -284,25 +279,25 @@ private fun ColumnScope.Details(
             }
 
             Text(
-                when (status.sessions) {
-                    0 -> "Aucun navigateur connecté."
-                    1 -> "1 navigateur connecté."
-                    else -> "${status.sessions} navigateurs connectés."
+                if (status.sessions == 0) {
+                    stringResource(R.string.remote_no_browser)
+                } else {
+                    pluralStringResource(R.plurals.remote_browsers_connected, status.sessions, status.sessions)
                 },
                 style = MaterialTheme.typography.bodyLarge,
             )
             status.lastActivity?.let {
-                Text("Dernière action : $it", style = MaterialTheme.typography.bodyMedium)
+                Text(stringResource(R.string.remote_last_action, it), style = MaterialTheme.typography.bodyMedium)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(
                     onClick = vm::disconnectAll,
                     enabled = status.sessions > 0,
                     modifier = Modifier.tvFocusHighlight(ButtonDefaults.outlinedShape),
-                ) { Text("Déconnecter les navigateurs") }
+                ) { Text(stringResource(R.string.remote_disconnect_all)) }
             }
             Text(
-                "La console s'arrête quand tu quittes cet écran, ou après 15 min sans activité.",
+                stringResource(R.string.remote_auto_stop),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

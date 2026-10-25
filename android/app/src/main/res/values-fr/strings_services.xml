@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="svc_channel_name">Proxy mTLS actif</string>
+    <string name="svc_channel_description">Affichée tant qu\'un proxy mTLS tourne en fond</string>
+    <string name="svc_action_stop_vpn">Arrêter VPN</string>
+    <string name="svc_action_stop">Arrêter</string>
+
+    <string name="svc_loopback_notif_title">Proxies mTLS</string>
+    <string name="svc_loopback_notif_text">%1$d actif(s)</string>
+
+    <string name="svc_vpn_notif_title">Tunnel mTLS</string>
+    <string name="svc_vpn_notif_text">VPN locale active. Tape Arrêter VPN pour la stopper</string>
+
+    <string name="svc_remote_start_failed">Démarrage impossible : %1$s</string>
+    <string name="svc_remote_idle_stopped">Arrêtée après %1$d min sans activité</string>
+    <string name="svc_remote_browser_paired">Navigateur appairé</string>
+
+    <string name="svc_activity_created">« %1$s » créée depuis %2$s</string>
+    <string name="svc_activity_updated">« %1$s » modifiée depuis %2$s</string>
+    <string name="svc_activity_deleted">« %1$s » supprimée depuis %2$s</string>
+    <string name="svc_activity_enabled">« %1$s » activée depuis %2$s</string>
+    <string name="svc_activity_disabled">« %1$s » désactivée depuis %2$s</string>
+    <string name="svc_activity_key_imported">Clé de « %1$s » importée depuis %2$s</string>
+    <string name="svc_activity_bundle_imported">Bundle importé depuis %1$s : %2$d prête(s), %3$d sans clé, %4$d ignorée(s)</string>
+    <string name="svc_activity_export_some">Export (%1$d config(s)) téléchargé depuis %2$s</string>
+    <string name="svc_activity_export_all">Export (toutes les configs) téléchargé depuis %1$s</string>
+    <string name="svc_activity_vpn_started">Tunnel VPN démarré depuis %1$s</string>
+    <string name="svc_activity_vpn_stopped">Tunnel VPN arrêté depuis %1$s</string>
+</resources>

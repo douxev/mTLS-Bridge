@@ -78,11 +78,12 @@ FOREGROUND_SERVICE pour maintenir les proxies en arrière-plan.
 
 ### Doc et outillage ouverts
 
-L'app elle-même est propriétaire, mais le **format de bundle de
-déploiement est documenté et ouvert** pour qu'un admin IT puisse
-générer des bundles depuis un simple script bash + openssl, sans
-même installer l'app sur son serveur de build. Voir le repo public
-de documentation pour la spec du format et un script de référence.
+L'app est open source (MPL-2.0), et le **format de bundle de
+déploiement est documenté** pour qu'un admin IT puisse générer des
+bundles depuis un simple script bash + openssl, sans même installer
+l'app sur son serveur de build. La spec du format et un script de
+référence sont dans le dossier `deployment-tools/` de
+https://github.com/douxev/mTLS-Bridge.
 
 ## Catégories
 

@@ -9,25 +9,25 @@ import androidx.core.content.ContextCompat
 import com.douxev.mtls_bridge.runtime.InstalledApps
 
 /**
- * Orchestrateur côté UI : décide quel service démarrer pour une config donnée,
- * gère le consentement VPN si nécessaire, et lance l'app cible derrière.
+ * UI-side orchestrator: decides which service to start for a given config,
+ * handles VPN consent when needed, and launches the target app afterwards.
  */
 object ProxyLauncher {
     private const val TAG = "mtls_bridge.launcher"
 
     /**
-     * Renvoie un Intent à `startActivityForResult` si l'utilisatrice n'a pas
-     * encore accordé la permission VPN, ou `null` si tout est déjà OK.
-     * Côté caller : si non-null, lancer l'intent puis rappeler [start] sur
+     * Returns an Intent for `startActivityForResult` if the user has not
+     * granted the VPN permission yet, or `null` if everything is already OK.
+     * Caller side: if non-null, launch the intent then call [start] again on
      * `RESULT_OK`.
      */
     fun vpnPrepareIntentIfNeeded(context: Context): Intent? =
         VpnService.prepare(context)
 
     /**
-     * Démarre / réactive le proxy loopback pour cette config (idempotent).
-     * Renvoie false si l'OS refuse le démarrage d'un service de premier plan
-     * (app en arrière-plan, Android 12+) — jamais d'exception.
+     * Starts / re-enables the loopback proxy for this config (idempotent).
+     * Returns false if the OS refuses to start a foreground service (app in
+     * the background, Android 12+); never throws.
      */
     fun startLoopback(context: Context, configId: String): Boolean {
         val intent = Intent(context, LoopbackProxyService::class.java).apply {
@@ -38,44 +38,45 @@ object ProxyLauncher {
             ContextCompat.startForegroundService(context, intent)
             true
         } catch (e: IllegalStateException) {
-            // ForegroundServiceStartNotAllowedException (API 31+) en est une sous-classe.
-            Log.w(TAG, "démarrage du proxy $configId refusé : ${e.message}")
+            // ForegroundServiceStartNotAllowedException (API 31+) is a subclass of it.
+            Log.w(TAG, "start of proxy $configId refused: ${e.message}")
             false
         }
     }
 
-    /** Arrête le proxy loopback de cette config (idempotent). */
+    /** Stops the loopback proxy of this config (idempotent). */
     fun stopLoopback(context: Context, configId: String) {
         val intent = Intent(context, LoopbackProxyService::class.java).apply {
             action = LoopbackProxyService.ACTION_STOP_FOR
             putExtra(LoopbackProxyService.EXTRA_CONFIG_ID, configId)
         }
-        // startService et non startForegroundService : un arrêt n'a pas à
-        // afficher la notification. Autorisé tant que le service tourne au
-        // premier plan (l'app compte alors comme « au premier plan ») ; refusé
-        // seulement si l'app est en arrière-plan sans service actif, donc sans
-        // proxy à arrêter.
+        // startService rather than startForegroundService: a stop does not need
+        // to show the notification. Allowed while the service runs in the
+        // foreground (the app then counts as "in the foreground"); refused only
+        // when the app is in the background with no running service, hence no
+        // proxy to stop.
         try {
             context.startService(intent)
         } catch (e: IllegalStateException) {
-            Log.d(TAG, "arrêt du proxy $configId ignoré (service inactif) : ${e.message}")
+            Log.d(TAG, "stop of proxy $configId ignored (service not running): ${e.message}")
         }
     }
 
     /**
-     * Démarre la VPN globale (agrège toutes les configs mode VPN). Appelé
-     * depuis l'UI (app au premier plan) : startService suffit, et le service
-     * ne plante pas si l'OS refuse ensuite son passage au premier plan.
+     * Starts the global VPN (aggregates every VPN-mode config). Called from the
+     * UI (app in the foreground): startService is enough, and the service does
+     * not crash if the OS then refuses to move it to the foreground.
      */
     fun startVpnGlobal(context: Context) {
         try {
             context.startService(Intent(context, MtlsVpnService::class.java))
         } catch (e: IllegalStateException) {
-            Log.w(TAG, "démarrage VPN refusé : ${e.message}")
+            Log.w(TAG, "VPN start refused: ${e.message}")
         }
     }
 
-    /** Coupe le tun puis le service (un stopService seul laisse le tun lié par l'OS). */
+
+    /** Shuts down the tun then the service (stopService alone leaves the tun bound by the OS). */
     fun stopVpn(context: Context) {
         val intent = Intent(context, MtlsVpnService::class.java)
             .setAction(MtlsVpnService.ACTION_STOP)
@@ -87,9 +88,9 @@ object ProxyLauncher {
     }
 
     /**
-     * Tente de lancer l'app cible juste après l'activation du proxy (launcher
-     * téléphone ou Android TV). Si l'app n'expose pas d'activity lanceable on
-     * no-op silencieusement.
+     * Tries to launch the target app right after the proxy is enabled (phone
+     * or Android TV launcher). If the app exposes no launchable activity, this
+     * is a silent no-op.
      */
     fun launchTargetApp(context: Activity, packageName: String) {
         val launch = InstalledApps.launchIntent(context.packageManager, packageName) ?: return

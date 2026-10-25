@@ -34,9 +34,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.data.ProxyMode
 import com.douxev.mtls_bridge.ui.add.ExtraCanonicalHostsField
 import com.douxev.mtls_bridge.ui.common.rememberLocalNetworkGate
@@ -56,10 +58,10 @@ fun EditConfigScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Modifier la config") },
+                title = { Text(stringResource(R.string.edit_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
             )
@@ -69,7 +71,7 @@ fun EditConfigScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                // Edge-to-edge : réserve la hauteur du clavier (cf. AddConfigScreen).
+                // Edge-to-edge: reserve the keyboard height (see AddConfigScreen).
                 .consumeWindowInsets(padding)
                 .imePadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
@@ -77,8 +79,7 @@ fun EditConfigScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "Le certificat et la clé Keystore ne sont pas modifiables ici. " +
-                    "Pour faire tourner les certs, supprime puis recrée la config.",
+                stringResource(R.string.edit_cert_notice),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -86,7 +87,7 @@ fun EditConfigScreen(
             OutlinedTextField(
                 value = state.displayName,
                 onValueChange = { v -> vm.update { copy(displayName = v) } },
-                label = { Text("Nom") },
+                label = { Text(stringResource(R.string.edit_label_name)) },
                 singleLine = true,
                 enabled = state.loaded,
                 modifier = Modifier.fillMaxWidth(),
@@ -98,7 +99,7 @@ fun EditConfigScreen(
                 OutlinedTextField(
                     value = state.upstreamHost,
                     onValueChange = { v -> vm.update { copy(upstreamHost = v) } },
-                    label = { Text("Hôte upstream") },
+                    label = { Text(stringResource(R.string.common_label_upstream_host)) },
                     singleLine = true,
                     enabled = state.loaded,
                     modifier = Modifier.weight(2f),
@@ -108,7 +109,7 @@ fun EditConfigScreen(
                     onValueChange = { v ->
                         vm.update { copy(upstreamPort = v.filter { c -> c.isDigit() }) }
                     },
-                    label = { Text("Port") },
+                    label = { Text(stringResource(R.string.common_label_port)) },
                     singleLine = true,
                     enabled = state.loaded,
                     modifier = Modifier.weight(1f),
@@ -118,7 +119,7 @@ fun EditConfigScreen(
             OutlinedTextField(
                 value = state.sni,
                 onValueChange = { v -> vm.update { copy(sni = v) } },
-                label = { Text("SNI (optionnel)") },
+                label = { Text(stringResource(R.string.common_label_sni)) },
                 singleLine = true,
                 enabled = state.loaded,
                 modifier = Modifier.fillMaxWidth(),
@@ -128,13 +129,13 @@ fun EditConfigScreen(
                 FilterChip(
                     selected = state.mode == ProxyMode.VPN,
                     onClick = { vm.update { copy(mode = ProxyMode.VPN) } },
-                    label = { Text("VPN") },
+                    label = { Text(stringResource(R.string.common_mode_vpn)) },
                     enabled = state.loaded,
                 )
                 FilterChip(
                     selected = state.mode == ProxyMode.LOOPBACK,
                     onClick = { vm.update { copy(mode = ProxyMode.LOOPBACK) } },
-                    label = { Text("Loopback") },
+                    label = { Text(stringResource(R.string.common_mode_loopback)) },
                     enabled = state.loaded,
                 )
             }
@@ -144,7 +145,7 @@ fun EditConfigScreen(
                     OutlinedTextField(
                         value = state.syntheticIp,
                         onValueChange = { v -> vm.update { copy(syntheticIp = v) } },
-                        label = { Text("IP synthétique") },
+                        label = { Text(stringResource(R.string.edit_label_synthetic_ip)) },
                         singleLine = true,
                         enabled = state.loaded,
                         modifier = Modifier.weight(2f),
@@ -154,7 +155,7 @@ fun EditConfigScreen(
                         onValueChange = { v ->
                             vm.update { copy(syntheticPort = v.filter { c -> c.isDigit() }) }
                         },
-                        label = { Text("Port") },
+                        label = { Text(stringResource(R.string.common_label_port)) },
                         singleLine = true,
                         enabled = state.loaded,
                         modifier = Modifier.weight(1f),
@@ -166,7 +167,7 @@ fun EditConfigScreen(
                     onValueChange = { v ->
                         vm.update { copy(loopbackPort = v.filter { c -> c.isDigit() }) }
                     },
-                    label = { Text("Port loopback (0 = éphémère)") },
+                    label = { Text(stringResource(R.string.common_label_loopback_port)) },
                     singleLine = true,
                     enabled = state.loaded,
                     modifier = Modifier.fillMaxWidth(),
@@ -197,13 +198,13 @@ fun EditConfigScreen(
             }
 
             Button(
-                // L'hôte upstream peut changer : permission réseau local
-                // (Android 17) avant que le coordinator ne relance le proxy.
+                // The upstream host may change: request the local network
+                // permission (Android 17) before the coordinator restarts the proxy.
                 onClick = { localNetworkGate.runAfterCheck(listOf(state.upstreamHost)) { vm.submit() } },
                 enabled = state.loaded && !state.submitting,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (state.submitting) "Sauvegarde…" else "Sauvegarder")
+                Text(stringResource(if (state.submitting) R.string.edit_saving else R.string.edit_save))
             }
         }
     }
@@ -220,9 +221,9 @@ private fun AppPicker(state: EditConfigUiState, vm: EditConfigViewModel) {
             enabled = false,
             value = current?.let { "${it.label}  (${it.packageName})" }
                 ?: state.targetPackage.takeIf { it.isNotBlank() }
-                ?: "Choisir l'app cible",
+                ?: stringResource(R.string.common_choose_target_app),
             onValueChange = {},
-            label = { Text("App cliente") },
+            label = { Text(stringResource(R.string.common_label_client_app)) },
             trailingIcon = { Icon(Icons.Default.ArrowDropDown, contentDescription = null) },
             modifier = Modifier
                 .fillMaxWidth()
@@ -280,16 +281,11 @@ private fun EditPathTokenSection(
                 )
                 Column(modifier = Modifier.padding(start = 8.dp)) {
                     Text(
-                        "Token d'isolation dans l'URL",
+                        stringResource(R.string.common_path_token_title),
                         style = MaterialTheme.typography.titleSmall,
                     )
                     Text(
-                        "Recommandé : empêche les autres apps du téléphone d'utiliser " +
-                            "votre certificat via le port loopback. Les webviews " +
-                            "(Jellyfin Android, Nextcloud) fonctionnent grâce au cookie " +
-                            "de session posé par la première page ouverte avec le token. " +
-                            "Changer le token invalide l'URL configurée dans l'app cible — " +
-                            "il faudra la recopier après sauvegarde.",
+                        stringResource(R.string.edit_path_token_text),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -309,7 +305,7 @@ private fun EditPathTokenSection(
                     androidx.compose.material3.TextButton(
                         onClick = onRegenerate,
                         enabled = loaded,
-                    ) { Text("Régénérer") }
+                    ) { Text(stringResource(R.string.common_regenerate)) }
                 }
             }
             Text(

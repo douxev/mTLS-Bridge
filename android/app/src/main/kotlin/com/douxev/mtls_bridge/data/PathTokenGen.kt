@@ -3,12 +3,12 @@ package com.douxev.mtls_bridge.data
 import java.security.SecureRandom
 
 /**
- * Génère un token URL-safe pour le path-isolation côté loopback.
+ * Generates a URL-safe token for loopback path isolation.
  *
- * Alphabet sans caractères ambigus (pas de 0/O, 1/l/I) pour qu'une doxev
- * puisse retaper le token à la main en cas de besoin. 12 chars × log2(54)
- * ≈ 69 bits d'entropie : largement au-dessus de ce qu'un scan brute-force
- * peut espérer faire sur un port loopback.
+ * The alphabet has no ambiguous characters (no 0/O, 1/l/I) so the user can
+ * retype the token by hand if needed. 12 chars x log2(54) = ~69 bits of
+ * entropy: far beyond what a brute-force scan can hope to achieve on a
+ * loopback port.
  */
 object PathTokenGen {
     private const val ALPHABET =

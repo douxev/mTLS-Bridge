@@ -6,17 +6,17 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * Mode de fonctionnement choisi par config.
+ * Operating mode chosen per config.
  *
- * - VPN : VpnService avec addAllowedApplication(targetPackage). Isolation
- *   garantie par l'OS, accepte plusieurs apps simultanément avec certs distincts.
- * - LOOPBACK : 127.0.0.1:port éphémère, UID-check par accept via
- *   ConnectivityManager.getConnectionOwnerUid. Cohabite avec d'autres VPN.
+ * - VPN: VpnService with addAllowedApplication(targetPackage). Isolation is
+ *   guaranteed by the OS; supports several apps at once with distinct certs.
+ * - LOOPBACK: 127.0.0.1:ephemeral port, per-accept UID check via
+ *   ConnectivityManager.getConnectionOwnerUid. Coexists with other VPNs.
  */
 enum class ProxyMode { VPN, LOOPBACK }
 
 /**
- * Niveau d'attestation matérielle de la clé importée. Renseigné après import
+ * Hardware attestation level of the imported key. Filled in after import
  * via `KeyInfo.getSecurityLevel()`.
  */
 enum class KeySecurityLevel { STRONGBOX, TRUSTED_ENVIRONMENT, SOFTWARE, UNKNOWN }
@@ -24,10 +24,10 @@ enum class KeySecurityLevel { STRONGBOX, TRUSTED_ENVIRONMENT, SOFTWARE, UNKNOWN 
 @Entity(
     tableName = "configs",
     indices = [
-        // 1 config = 1 app : unicité forte sur le package cible. Si la doxev
-        // veut utiliser le même cert pour deux apps, elle crée deux configs
-        // avec deux paires (.p12 ou copie) — c'est volontairement explicite
-        // pour qu'il n'y ait jamais d'ambiguïté de routage par UID/IP.
+        // 1 config = 1 app: strict uniqueness on the target package. If the
+        // user wants the same cert for two apps, they create two configs with
+        // two key pairs (.p12 or copy). This is deliberately explicit so that
+        // routing by UID/IP is never ambiguous.
         Index(value = ["targetPackage"], unique = true),
         Index(value = ["displayName"], unique = true),
     ],
@@ -43,45 +43,45 @@ data class ConfigEntity(
     val certChainPem: ByteArray,
     val keystoreAlias: String,
     val mode: ProxyMode,
-    val syntheticIp: String?, // VPN only — IP TEST-NET 192.0.2.X
+    val syntheticIp: String?, // VPN only: TEST-NET IP 192.0.2.X
     val syntheticPort: Int?, // VPN only
-    val loopbackPort: Int?, // LOOPBACK only — 0 = éphémère
+    val loopbackPort: Int?, // LOOPBACK only: 0 = ephemeral
     val securityLevel: KeySecurityLevel,
     val createdAtEpochMs: Long,
     /**
-     * Loopback uniquement : si true, le service est démarré et reste actif.
-     * Désactivable depuis la carte de la config (Switch). Auto = true à la
-     * création. Ignoré pour les configs en mode VPN (pilotage global via le
-     * toggle de la liste).
+     * Loopback only: if true, the service is started and stays active.
+     * Can be turned off from the config card (Switch). Defaults to true on
+     * creation. Ignored for VPN-mode configs (driven globally by the list
+     * toggle).
      */
     val enabled: Boolean = true,
     /**
-     * `true` après un import depuis un fichier d'export : la clé privée
-     * Keystore est absente sur ce device (non-exportable depuis l'autre).
-     * L'UI affiche un badge "clé manquante" et bloque le démarrage du proxy
-     * tant que la doxev n'a pas refourni son .p12 via le bouton "Importer la
-     * clé" sur le détail de la config.
+     * `true` after an import from an export file: the Keystore private key is
+     * missing on this device (non-exportable from the other one). The UI shows
+     * a "missing key" badge and blocks the proxy from starting until the user
+     * provides their .p12 again via the "Import key" button on the config
+     * detail screen.
      */
     val needsKeystoreRefresh: Boolean = false,
     /**
-     * Loopback : token secret optionnel inséré dans le path HTTP pour isoler
-     * cette config des autres apps du device. URL effective :
-     * `http://127.0.0.1:PORT/<pathToken>/`. Le proxy refuse fail-closed les
-     * requêtes dont le path ne commence pas par ce préfixe. Remplace la
-     * défense par UID, inutile sur Android pour les apps non-VPN.
-     * `null` ⇒ pas de check (URL plain http://127.0.0.1:PORT/).
+     * Loopback: optional secret token inserted into the HTTP path to isolate
+     * this config from the other apps on the device. Effective URL:
+     * `http://127.0.0.1:PORT/<pathToken>/`. The proxy rejects (fail-closed)
+     * requests whose path does not start with this prefix. Replaces the UID
+     * defense, which is useless on Android for non-VPN apps.
+     * `null` means no check (plain URL http://127.0.0.1:PORT/).
      */
     val pathToken: String? = null,
     /**
-     * Loopback : hôtes canoniques additionnels (sans scheme) que le proxy
-     * réécrit vers son URL loopback, quand le serveur émet un autre nom que
-     * [upstreamHost] (ex. Nextcloud `overwrite.cli.url`). Stocké normalisé,
-     * séparé par des virgules — voir [CanonicalHosts]. `null` ⇒ aucun.
+     * Loopback: additional canonical hosts (without scheme) that the proxy
+     * rewrites to its loopback URL, when the server emits a name other than
+     * [upstreamHost] (e.g. Nextcloud `overwrite.cli.url`). Stored normalized,
+     * comma-separated; see [CanonicalHosts]. `null` means none.
      */
     val extraCanonicalHosts: String? = null,
 ) {
-    // Room exige equals/hashCode manuels quand on a des ByteArray (qui sinon
-    // comparent par identité, ce qui casse les diffs Flow).
+    // Room requires manual equals/hashCode with ByteArray fields (which
+    // otherwise compare by identity, breaking Flow diffs).
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is ConfigEntity) return false
@@ -130,12 +130,12 @@ data class ConfigEntity(
     }
 }
 
-/** Encodage de [ConfigEntity.extraCanonicalHosts] (colonne texte unique). */
+/** Encoding of [ConfigEntity.extraCanonicalHosts] (single text column). */
 object CanonicalHosts {
     /**
-     * Saisie libre (virgules, espaces ou retours à la ligne) → valeur stockée.
-     * Tolère un scheme ou un path collés par erreur ; `null` si vide. Un
-     * `:port` est conservé (le core réécrit `https://<hôte[:port]>`).
+     * Free-form input (commas, spaces or newlines) to stored value.
+     * Tolerates a scheme or path pasted by mistake; `null` if empty. A
+     * `:port` is kept (the core rewrites `https://<host[:port]>`).
      */
     fun normalize(input: String?): String? =
         parse(input).takeIf { it.isNotEmpty() }?.joinToString(",")

@@ -8,18 +8,18 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 
 /**
- * Implémente [PeerUidResolver] côté Android en s'appuyant sur
+ * Android implementation of [PeerUidResolver], built on
  * `ConnectivityManager.getConnectionOwnerUid(IPPROTO_TCP, peerLocal, peerRemote)`.
  *
- * Convention du trait (depuis le pair) : les paramètres `peerLocal*` /
- * `peerRemote*` sont **déjà du point de vue du pair**, donc aucun swap n'est
- * fait ici. Pour le mode loopback, l'appelant Rust traduit l'inversion ;
- * pour le mode VPN, les addresses arrivent déjà dans le bon sens.
+ * Trait convention (from the peer's side): the `peerLocal*` / `peerRemote*`
+ * parameters are **already from the peer's point of view**, so no swap is
+ * done here. In loopback mode, the Rust caller handles the inversion; in VPN
+ * mode, the addresses already arrive in the right order.
  *
- * Pour les sockets routés via VPN, certains kernels Android ne renvoient pas
- * d'UID (return -1). Côté Rust on traite ce cas en soft-fail (on accepte) car
- * `addAllowedApplication` du VpnService.Builder assure déjà l'isolation au
- * niveau OS.
+ * For sockets routed through the VPN, some Android kernels return no UID
+ * (return -1). The Rust side treats this as a soft failure (accepts) because
+ * `addAllowedApplication` on VpnService.Builder already enforces isolation at
+ * the OS level.
  */
 class AndroidPeerUidResolver(context: Context) : PeerUidResolver {
     private val cm = context.getSystemService(ConnectivityManager::class.java)
@@ -38,7 +38,7 @@ class AndroidPeerUidResolver(context: Context) : PeerUidResolver {
         } catch (_: SecurityException) {
             null
         } catch (_: IllegalArgumentException) {
-            // Adresses non-routables refusées par l'OS sur certains devices.
+            // Non-routable addresses rejected by the OS on some devices.
             null
         }
     }

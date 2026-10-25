@@ -25,8 +25,8 @@ private val LightColors = lightColorScheme(
 @Composable
 fun MtlswrapTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color : palette dérivée du fond d'écran (Android 12+).
-    // On l'active par défaut, c'est cohérent avec Material You / M3 Expressive.
+    // Dynamic color: palette derived from the wallpaper (Android 12+).
+    // Enabled by default, consistent with Material You / M3 Expressive.
     dynamicColor: Boolean = true,
     content: @Composable () -> Unit
 ) {

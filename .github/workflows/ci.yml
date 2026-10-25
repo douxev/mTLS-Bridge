@@ -1,7 +1,7 @@
 name: CI
 
-# Le dépôt est à la racine (core/, android/, Cargo.toml…) : pas de sous-dossier
-# à filtrer ni de working-directory global.
+# The project lives at the repository root (core/, android/, Cargo.toml…):
+# no subdirectory to filter and no global working-directory.
 on:
   push:
     branches: [main, master]
@@ -27,14 +27,14 @@ permissions:
   contents: read
 
 env:
-  # Doivent suivre android/app/build.gradle.kts (ndkVersion, compileOptions /
+  # Must match android/app/build.gradle.kts (ndkVersion, compileOptions /
   # jvmTarget).
   NDK_VERSION: 27.2.12479018
   JAVA_VERSION: '21'
 
 jobs:
   rust-tests:
-    name: Tests Rust (host)
+    name: Rust tests (host)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,22 +50,22 @@ jobs:
       - name: Build
         run: cargo build -p mtls-bridge-core
 
-      - name: Tests (unitaires + intégration)
+      - name: Tests (unit + integration)
         run: cargo test -p mtls-bridge-core --tests
 
-      - name: Clippy (warnings = erreurs)
+      - name: Clippy (warnings = errors)
         run: cargo clippy -p mtls-bridge-core --tests -- -D warnings
 
       - name: Format
         run: cargo fmt --all -- --check
 
   android-build:
-    name: Build + tests unitaires Android (3 ABIs)
+    name: Android build + unit tests (3 ABIs)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # ABIs = abiFilters / cargo-ndk -t de android/app/build.gradle.kts.
+      # ABIs = abiFilters / cargo-ndk -t in android/app/build.gradle.kts.
       - name: Install Rust + Android targets
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -92,9 +92,9 @@ jobs:
       - name: Gradle cache
         uses: gradle/actions/setup-gradle@v3
 
-      # ANDROID_NDK_HOME (lu par cargo-ndk) est dérivé dans le shell : la
-      # variable ANDROID_HOME du runner n'est pas forcément dans le contexte
-      # `env` des expressions.
+      # ANDROID_NDK_HOME (read by cargo-ndk) is derived in the shell: the
+      # runner's ANDROID_HOME variable is not necessarily in the `env`
+      # context of expressions.
       - name: Build debug APK
         working-directory: android
         run: |
@@ -109,9 +109,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Même job que le build : preBuild dépend de la compilation Rust des
-      # 3 ABIs, un job séparé la referait entièrement.
-      - name: Tests unitaires Android (JVM)
+      # Same job as the build: preBuild depends on the Rust compilation for
+      # the 3 ABIs, which a separate job would have to redo entirely.
+      - name: Android unit tests (JVM)
         working-directory: android
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"

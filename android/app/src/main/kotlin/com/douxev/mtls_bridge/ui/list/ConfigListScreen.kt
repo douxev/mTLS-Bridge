@@ -49,11 +49,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.douxev.mtls_bridge.MtlsApplication
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.data.ConfigEntity
 import com.douxev.mtls_bridge.data.ProxyMode
 import com.douxev.mtls_bridge.runtime.SafFileUtils
@@ -83,8 +86,8 @@ fun ConfigListScreen(
     val localNetworkGate = rememberLocalNetworkGate()
     val isTv = LocalIsTv.current
 
-    // Proxies démarrés sans geste ici (ouverture de l'app, import de bundle) :
-    // permission réseau local (Android 17) demandée une fois s'il le faut.
+    // Proxies started without a gesture here (app launch, bundle import):
+    // the local network permission (Android 17) is requested once if needed.
     val activeUpstreams = configs
         .filter { (it.mode == ProxyMode.LOOPBACK && it.enabled) || (it.mode == ProxyMode.VPN && vpnRunning) }
         .map { it.upstreamHost }
@@ -108,24 +111,32 @@ fun ConfigListScreen(
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
     ) { uri ->
-        // Capturer la sélection AVANT de la remettre à null : la coroutine
-        // s'exécute après ce callback et lirait sinon null (= tout exporter).
+        // Capture the selection BEFORE resetting it to null: the coroutine
+        // runs after this callback and would otherwise read null (= export everything).
         val ids = pendingExportIds
         pendingExportIds = null
         if (uri == null) return@rememberLauncherForActivityResult
         if (ids == null) {
-            // Sélection perdue (process tué pendant le sélecteur de fichier) :
-            // on n'exporte surtout pas tout par défaut.
-            Toast.makeText(context, "Sélection perdue, relance l'export", Toast.LENGTH_LONG).show()
+            // Selection lost (process killed while the file picker was open):
+            // never fall back to exporting everything.
+            Toast.makeText(context, context.getString(R.string.list_export_selection_lost), Toast.LENGTH_LONG).show()
             return@rememberLauncherForActivityResult
         }
         scope.launch {
             try {
                 val bytes = vm.exportToZip(ids)
                 SafFileUtils.writeBytes(context, uri, bytes)
-                Toast.makeText(context, "${bytes.size / 1024} ko exportés", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.list_export_done, bytes.size / 1024),
+                    Toast.LENGTH_SHORT,
+                ).show()
             } catch (t: Throwable) {
-                Toast.makeText(context, "Export échoué : ${t.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.list_export_failed, t.message.orEmpty()),
+                    Toast.LENGTH_LONG,
+                ).show()
             }
         }
     }
@@ -140,20 +151,31 @@ fun ConfigListScreen(
                 val bytes = SafFileUtils.readBytes(context, uri)
                 val preview = vm.peekImportZip(bytes)
                 if (preview.needsPassphrase) {
-                    // Deployment bundle : on demande la passphrase commune des .p12.
+                    // Deployment bundle: ask for the shared passphrase of the .p12 files.
                     importPassphrasePending = uri to bytes
                 } else {
                     val r = vm.importFromZip(bytes)
                     Toast.makeText(
                         context,
-                        "${r.importedWithoutKey} sans clé, ${r.skipped} ignorée(s). " +
-                            "Rajoute les .p12 dans le détail de chaque config.",
+                        context.getString(
+                            R.string.list_import_summary_no_key,
+                            context.resources.getQuantityString(
+                                R.plurals.list_import_without_key, r.importedWithoutKey, r.importedWithoutKey,
+                            ),
+                            context.resources.getQuantityString(
+                                R.plurals.list_import_skipped, r.skipped, r.skipped,
+                            ),
+                        ),
                         Toast.LENGTH_LONG,
                     ).show()
                     if (deleteImportFile) SafFileUtils.deleteIfPossible(context, uri)
                 }
             } catch (t: Throwable) {
-                Toast.makeText(context, "Import échoué : ${t.message}", Toast.LENGTH_LONG).show()
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.list_import_failed, t.message.orEmpty()),
+                    Toast.LENGTH_LONG,
+                ).show()
             }
         }
     }
@@ -166,13 +188,27 @@ fun ConfigListScreen(
                         val r = vm.importFromZip(bytes, passphrase.toCharArray())
                         Toast.makeText(
                             context,
-                            "${r.importedWithKey} prête(s) à l'emploi, " +
-                                "${r.importedWithoutKey} sans clé, ${r.skipped} ignorée(s).",
+                            context.getString(
+                                R.string.list_import_summary,
+                                context.resources.getQuantityString(
+                                    R.plurals.list_import_ready, r.importedWithKey, r.importedWithKey,
+                                ),
+                                context.resources.getQuantityString(
+                                    R.plurals.list_import_without_key, r.importedWithoutKey, r.importedWithoutKey,
+                                ),
+                                context.resources.getQuantityString(
+                                    R.plurals.list_import_skipped, r.skipped, r.skipped,
+                                ),
+                            ),
                             Toast.LENGTH_LONG,
                         ).show()
                         if (deleteImportFile) SafFileUtils.deleteIfPossible(context, uri)
                     } catch (t: Throwable) {
-                        Toast.makeText(context, "Import échoué : ${t.message}", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.list_import_failed, t.message.orEmpty()),
+                            Toast.LENGTH_LONG,
+                        ).show()
                     }
                 }
                 importPassphrasePending = null
@@ -207,15 +243,15 @@ fun ConfigListScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Configurations mTLS") },
+                title = { Text(stringResource(R.string.list_title)) },
                 actions = {
                     var menuOpen by remember { mutableStateOf(false) }
                     IconButton(onClick = { menuOpen = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Plus")
+                        Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.list_menu_more))
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
-                            text = { Text("Exporter…") },
+                            text = { Text(stringResource(R.string.list_menu_export)) },
                             onClick = {
                                 menuOpen = false
                                 showExportDialog = true
@@ -223,7 +259,7 @@ fun ConfigListScreen(
                             enabled = configs.isNotEmpty(),
                         )
                         DropdownMenuItem(
-                            text = { Text("Importer…") },
+                            text = { Text(stringResource(R.string.list_menu_import)) },
                             onClick = {
                                 menuOpen = false
                                 importLauncher.launchOrExplain(context, "application/zip")
@@ -236,20 +272,20 @@ fun ConfigListScreen(
                                         checked = deleteImportFile,
                                         onCheckedChange = { deleteImportFile = it },
                                     )
-                                    Text("Supprimer le fichier après import")
+                                    Text(stringResource(R.string.list_menu_delete_after_import))
                                 }
                             },
                             onClick = { deleteImportFile = !deleteImportFile },
                         )
                         DropdownMenuItem(
-                            text = { Text("Configuration à distance…") },
+                            text = { Text(stringResource(R.string.list_menu_remote)) },
                             onClick = {
                                 menuOpen = false
                                 onRemoteClick()
                             },
                         )
                         DropdownMenuItem(
-                            text = { Text("Aide & déploiement") },
+                            text = { Text(stringResource(R.string.list_menu_help)) },
                             onClick = {
                                 menuOpen = false
                                 onHelpClick()
@@ -263,7 +299,7 @@ fun ConfigListScreen(
             ExtendedFloatingActionButton(
                 onClick = onAddClick,
                 icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("Nouvelle config") },
+                text = { Text(stringResource(R.string.list_fab_new)) },
             )
         },
     ) { padding ->
@@ -274,12 +310,12 @@ fun ConfigListScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                // Marge basse : la dernière carte ne doit pas finir sous le FAB.
+                // Bottom padding: the last card must not end up under the FAB.
                 contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 96.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                // Sur TV, saisir hôte, .p12 et passphrase à la télécommande est
-                // pénible : la console web est mise en avant.
+                // On TV, typing a host, a .p12 and a passphrase with the remote is
+                // tedious: the web console is put forward.
                 if (isTv) {
                     item { RemoteConfigCard(onRemoteClick) }
                 }
@@ -347,11 +383,11 @@ private fun VpnGlobalToggle(running: Boolean, onToggle: () -> Unit, configCount:
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    if (running) "Tunnel VPN actif" else "Tunnel VPN arrêté",
+                    stringResource(if (running) R.string.list_vpn_active else R.string.list_vpn_stopped),
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    "$configCount config(s) en mode VPN",
+                    pluralStringResource(R.plurals.list_vpn_config_count, configCount, configCount),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -369,13 +405,11 @@ private fun BundlePassphraseDialog(
     var pw by remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Passphrase du bundle") },
+        title = { Text(stringResource(R.string.list_bundle_title)) },
         text = {
             Column {
                 Text(
-                    "Ce bundle contient des .p12 chiffrés. Saisis la passphrase " +
-                        "commune (fournie par ton admin) pour déchiffrer toutes les " +
-                        "clés en une fois.",
+                    stringResource(R.string.list_bundle_text),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp),
@@ -383,7 +417,7 @@ private fun BundlePassphraseDialog(
                 OutlinedTextField(
                     value = pw,
                     onValueChange = { pw = it },
-                    label = { Text("Passphrase") },
+                    label = { Text(stringResource(R.string.common_passphrase)) },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
@@ -392,10 +426,10 @@ private fun BundlePassphraseDialog(
         },
         confirmButton = {
             TextButton(onClick = { onConfirm(pw); pw = "" }, enabled = pw.isNotEmpty()) {
-                Text("Importer")
+                Text(stringResource(R.string.common_import))
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Annuler") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -407,20 +441,18 @@ private fun DeleteConfirmDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Supprimer « ${config.displayName} » ?") },
+        title = { Text(stringResource(R.string.list_delete_title, config.displayName)) },
         text = {
             Text(
-                "La clé privée est effacée du Keystore et ne peut pas être " +
-                    "récupérée : il faudra ré-importer le .p12 d'origine pour " +
-                    "recréer cette config.",
+                stringResource(R.string.list_delete_text),
             )
         },
         confirmButton = {
             TextButton(onClick = onConfirm) {
-                Text("Supprimer", color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.common_delete), color = MaterialTheme.colorScheme.error)
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Annuler") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) } },
     )
 }
 
@@ -433,13 +465,11 @@ private fun ExportSelectionDialog(
     val selected = remember { mutableStateOf(configs.map { it.id }.toSet()) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Exporter les configs") },
+        title = { Text(stringResource(R.string.list_export_title)) },
         text = {
             Column {
                 Text(
-                    "Coche les configs à inclure dans le zip. " +
-                        "Le fichier contient les certs publics + métadonnées, " +
-                        "pas la clé privée (qui reste dans le Keystore).",
+                    stringResource(R.string.list_export_text),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp),
@@ -447,8 +477,8 @@ private fun ExportSelectionDialog(
                 Row {
                     TextButton(onClick = {
                         selected.value = configs.map { it.id }.toSet()
-                    }) { Text("Tout") }
-                    TextButton(onClick = { selected.value = emptySet() }) { Text("Aucun") }
+                    }) { Text(stringResource(R.string.list_export_all)) }
+                    TextButton(onClick = { selected.value = emptySet() }) { Text(stringResource(R.string.list_export_none)) }
                 }
                 LazyColumn(modifier = Modifier.padding(top = 4.dp)) {
                     items(configs, key = { it.id }) { c ->
@@ -474,10 +504,10 @@ private fun ExportSelectionDialog(
             TextButton(
                 onClick = { onConfirm(selected.value) },
                 enabled = selected.value.isNotEmpty(),
-            ) { Text("Exporter") }
+            ) { Text(stringResource(R.string.list_export_confirm)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Annuler") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.common_cancel)) }
         },
     )
 }
@@ -493,11 +523,11 @@ private fun EmptyState(padding: PaddingValues, onRemoteClick: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            "Aucune configuration mTLS",
+            stringResource(R.string.list_empty_title),
             style = MaterialTheme.typography.titleMedium,
         )
         Text(
-            "Importe un .p12 pour wrapper une app avec mTLS.",
+            stringResource(R.string.list_empty_text),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -506,7 +536,7 @@ private fun EmptyState(padding: PaddingValues, onRemoteClick: () -> Unit) {
             onClick = onRemoteClick,
             modifier = Modifier.tvFocusHighlight(ButtonDefaults.outlinedShape),
         ) {
-            Text("Configurer depuis un ordinateur ou un smartphone")
+            Text(stringResource(R.string.list_empty_remote))
         }
     }
 }
@@ -519,10 +549,9 @@ private fun RemoteConfigCard(onClick: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text("Configuration à distance", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.list_remote_card_title), style = MaterialTheme.typography.titleMedium)
             Text(
-                "Ouvre une page web sur le réseau local pour créer et modifier les " +
-                    "configs depuis le navigateur d'un ordinateur ou d'un smartphone.",
+                stringResource(R.string.list_remote_card_text),
                 style = MaterialTheme.typography.bodyMedium,
             )
         }
@@ -560,7 +589,7 @@ private fun ConfigCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        config.targetPackage.ifBlank { "⚠ aucune app cible — modifier" },
+                        config.targetPackage.ifBlank { stringResource(R.string.list_no_target_app) },
                         style = MaterialTheme.typography.bodySmall,
                         color = if (config.targetPackage.isBlank())
                             MaterialTheme.colorScheme.error
@@ -568,16 +597,16 @@ private fun ConfigCard(
                     )
                     if (config.needsKeystoreRefresh) {
                         Text(
-                            "⚠ clé manquante — re-importer le .p12 (détail)",
+                            stringResource(R.string.list_missing_key),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Switch on/off pour les loopbacks. Pour les VPN, le contrôle
-                    // se fait via le toggle global (en haut de la liste).
-                    // Désactivé si la clé Keystore manque (import depuis fichier).
+                    // On/off switch for loopback configs. VPN configs are controlled
+                    // through the global toggle (at the top of the list).
+                    // Disabled if the Keystore key is missing (imported from a file).
                     if (config.mode == ProxyMode.LOOPBACK) {
                         Switch(
                             checked = config.enabled,
@@ -587,10 +616,10 @@ private fun ConfigCard(
                         )
                     }
                     IconButton(onClick = onEdit) {
-                        Icon(Icons.Default.Edit, contentDescription = "Modifier")
+                        Icon(Icons.Default.Edit, contentDescription = stringResource(R.string.common_edit))
                     }
                     IconButton(onClick = onDelete) {
-                        Icon(Icons.Outlined.Delete, contentDescription = "Supprimer")
+                        Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.common_delete))
                     }
                 }
             }

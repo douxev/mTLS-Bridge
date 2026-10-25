@@ -9,22 +9,22 @@ import androidx.security.crypto.MasterKey
 import java.security.SecureRandom
 
 /**
- * Fournit la passphrase de SQLCipher. On génère une fois 32 octets aléatoires,
- * on les chiffre dans des `EncryptedSharedPreferences` adossés à un AES master-key
- * non-exportable du Keystore Android, puis on les relit à chaque ouverture DB.
+ * Provides the SQLCipher passphrase. 32 random bytes are generated once,
+ * encrypted in `EncryptedSharedPreferences` backed by a non-exportable AES
+ * master key from the Android Keystore, then read back on every DB open.
  *
- * Pourquoi cette indirection plutôt que dériver directement depuis Keystore :
- * Keystore peut chiffrer/déchiffrer mais ne donne pas un secret stable
- * réutilisable comme passphrase SQLCipher sans un cycle decrypt() à chaque
- * démarrage. EncryptedSharedPreferences fait exactement ça en interne avec un
- * master-key Keystore → on ne réinvente pas la roue.
+ * Why this indirection rather than deriving directly from the Keystore:
+ * the Keystore can encrypt/decrypt but does not provide a stable secret
+ * usable as a SQLCipher passphrase without a decrypt() cycle on every start.
+ * EncryptedSharedPreferences does exactly that internally with a Keystore
+ * master key, so there is no need to reinvent the wheel.
  */
 class DbPassphraseProvider(private val context: Context) {
 
     fun obtainPassphrase(): ByteArray {
-        // L'alias passé au Builder doit matcher celui du KeyGenParameterSpec,
-        // sinon MasterKey.build() throw — c'est la cause #1 du crash startup
-        // observé sur la première version.
+        // The alias passed to the Builder must match the KeyGenParameterSpec
+        // one, otherwise MasterKey.build() throws: this was the main cause of
+        // the startup crash seen in the first version.
         val keyAlias = "mtls_bridge-db-master"
         val masterKey = MasterKey.Builder(context, keyAlias)
             .setKeyGenParameterSpec(

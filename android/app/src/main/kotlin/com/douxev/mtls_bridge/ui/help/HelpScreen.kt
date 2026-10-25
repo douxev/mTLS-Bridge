@@ -30,9 +30,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.douxev.mtls_bridge.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,10 +46,10 @@ fun HelpScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Aide & déploiement") },
+                title = { Text(stringResource(R.string.help_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Retour")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.common_back))
                     }
                 },
             )
@@ -71,74 +73,54 @@ fun HelpScreen(
 }
 
 @Composable
-private fun OverviewCard() = SectionCard(title = "Qu'est-ce que mTLS Bridge ?") {
+private fun OverviewCard() = SectionCard(title = stringResource(R.string.help_overview_title)) {
     Text(
-        "mTLS Bridge est un proxy local mTLS pour Android. Tu pointes ton app " +
-            "(Jellyfin, Nextcloud, Home Assistant…) vers une URL en localhost ; " +
-            "mTLS Bridge intercepte la requête en clair, la chiffre avec ton " +
-            "certificat client, et la relaie vers ton backend self-hosted.",
+        stringResource(R.string.help_overview_text),
         style = MaterialTheme.typography.bodyMedium,
     )
     Text(
-        "La clé privée reste dans Android Keystore (TEE matériel quand " +
-            "disponible), non-exportable du device.",
+        stringResource(R.string.help_overview_key),
         style = MaterialTheme.typography.bodyMedium,
     )
 }
 
 @Composable
-private fun ModeCard(onCompareModes: () -> Unit) = SectionCard(title = "Loopback vs VPN") {
+private fun ModeCard(onCompareModes: () -> Unit) = SectionCard(title = stringResource(R.string.help_mode_title)) {
     Text(
-        "Deux modes existent. Le loopback (recommandé) est plus sûr et plus " +
-            "économe en batterie : chaque config a son port 127.0.0.1, isolation " +
-            "stricte par UID, démarrage on-demand. Le VPN n'est utile que pour " +
-            "les apps qui refusent une URL en localhost.",
+        stringResource(R.string.help_mode_text),
         style = MaterialTheme.typography.bodyMedium,
     )
     AssistChip(
         onClick = onCompareModes,
-        label = { Text("Comparer en détail") },
+        label = { Text(stringResource(R.string.help_compare_details)) },
         colors = AssistChipDefaults.assistChipColors(),
     )
 }
 
 @Composable
-private fun Android17Card() = SectionCard(title = "Android 17 : profils et réseau local") {
+private fun Android17Card() = SectionCard(title = stringResource(R.string.help_android17_title)) {
     Text(
-        "Android 17 bloque le loopback (127.0.0.1) entre profils : l'app cible " +
-            "doit être dans le même profil que mTLS Bridge. Une app du profil " +
-            "professionnel ou de l'Espace privé ne peut pas joindre un proxy du " +
-            "profil principal — installe aussi mTLS Bridge dans ce profil et " +
-            "crée la config là-bas.",
+        stringResource(R.string.help_android17_profiles),
         style = MaterialTheme.typography.bodyMedium,
     )
     Text(
-        "Si ton serveur est sur le réseau local (192.168.x.x, 10.x.x.x, " +
-            "100.64.x.x…), Android 17 demande l'autorisation « Appareils à " +
-            "proximité » (accès au réseau local) avant de démarrer le proxy. " +
-            "Sans elle, les connexions vers ce serveur échouent.",
+        stringResource(R.string.help_android17_local_network),
         style = MaterialTheme.typography.bodyMedium,
     )
 }
 
 @Composable
-private fun ImportBundleCard() = SectionCard(title = "Importer un bundle de déploiement") {
+private fun ImportBundleCard() = SectionCard(title = stringResource(R.string.help_import_title)) {
     Text(
-        "Si ton admin t'a envoyé un fichier .zip mtls-bridge-bundle :",
+        stringResource(R.string.help_import_intro),
         style = MaterialTheme.typography.bodyMedium,
     )
     Text(
-        "1. Menu ⋮ en haut de la liste → Importer\n" +
-            "2. Sélectionne le .zip\n" +
-            "3. Saisis la passphrase (transmise séparément par ton admin)\n" +
-            "4. Toutes les configs apparaissent, déjà actives\n" +
-            "5. Ouvre ton app (ex. Jellyfin), tape l'URL affichée sur la " +
-            "card de la config",
+        stringResource(R.string.help_import_steps),
         style = MaterialTheme.typography.bodyMedium,
     )
     Text(
-        "Optionnel : coche \"Supprimer le fichier après import\" pour ne pas " +
-            "laisser traîner le bundle sur ton filesystem.",
+        stringResource(R.string.help_import_tip, stringResource(R.string.list_menu_delete_after_import)),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -146,12 +128,10 @@ private fun ImportBundleCard() = SectionCard(title = "Importer un bundle de dép
 
 @Composable
 private fun AdminBundleCard(onCopy: (String) -> Unit) = SectionCard(
-    title = "Générer un bundle (admin IT)",
+    title = stringResource(R.string.help_admin_title),
 ) {
     Text(
-        "Pour distribuer mTLS Bridge à des employés sans qu'ils touchent à " +
-            "openssl : ce script bash génère un .zip prêt à l'import. " +
-            "L'employé n'a qu'à cliquer dessus.",
+        stringResource(R.string.help_admin_text),
         style = MaterialTheme.typography.bodyMedium,
     )
     Card(
@@ -172,7 +152,7 @@ private fun AdminBundleCard(onCopy: (String) -> Unit) = SectionCard(
                     fontWeight = FontWeight.SemiBold,
                 )
                 IconButton(onClick = { onCopy(DEPLOYMENT_SCRIPT_BASH) }) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "Copier")
+                    Icon(Icons.Default.ContentCopy, contentDescription = stringResource(R.string.help_copy_script))
                 }
             }
             Text(
@@ -183,37 +163,28 @@ private fun AdminBundleCard(onCopy: (String) -> Unit) = SectionCard(
         }
     }
     Text(
-        "Adapte les variables en haut du script (config_id, hôte, CA…). " +
-            "La passphrase aléatoire est imprimée à la fin — transmets-la à " +
-            "l'employé par un canal séparé (Signal, Matrix, SMS).",
+        stringResource(R.string.help_admin_footer),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
 @Composable
-private fun SecurityCard() = SectionCard(title = "Sécurité — résumé") {
+private fun SecurityCard() = SectionCard(title = stringResource(R.string.help_security_title)) {
     Text(
-        "• Clé privée : dans Android Keystore (TEE / StrongBox), " +
-            "non-exportable du device. L'UI affiche le niveau effectivement " +
-            "obtenu (StrongBox / TEE / Software).",
+        stringResource(R.string.help_security_key),
         style = MaterialTheme.typography.bodyMedium,
     )
     Text(
-        "• Configs : stockées chiffrées (SQLCipher AES-256-GCM, passphrase " +
-            "wrappée par un master-key AES Keystore).",
+        stringResource(R.string.help_security_configs),
         style = MaterialTheme.typography.bodyMedium,
     )
     Text(
-        "• Isolation : chaque proxy loopback a son UID check fail-closed via " +
-            "ConnectivityManager.getConnectionOwnerUid — aucune autre app ne " +
-            "peut intercepter la session.",
+        stringResource(R.string.help_security_isolation),
         style = MaterialTheme.typography.bodyMedium,
     )
     Text(
-        "• Audit : tous les événements (bind, accept, reject, bridge, …) " +
-            "sont persistés en DB chiffrée et consultables par config. Purge " +
-            "automatique au-delà de 7 jours.",
+        stringResource(R.string.help_security_audit),
         style = MaterialTheme.typography.bodyMedium,
     )
 }
@@ -242,6 +213,6 @@ private fun copyToClipboard(context: android.content.Context, text: String) {
     val mgr = context.getSystemService(ClipboardManager::class.java)
     mgr.setPrimaryClip(ClipData.newPlainText("mTLS Bridge deployment script", text))
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-        Toast.makeText(context, "Script copié", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, context.getString(R.string.help_script_copied), Toast.LENGTH_SHORT).show()
     }
 }

@@ -16,27 +16,28 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
- * Observe le repo de configs et garde le service [com.douxev.mtls_bridge.service.
- * LoopbackProxyService] synchronisé avec la liste des configs LOOPBACK `enabled`:
+ * Observes the config repo and keeps the [com.douxev.mtls_bridge.service.
+ * LoopbackProxyService] service in sync with the list of `enabled` LOOPBACK
+ * configs:
  *
- * - À chaque émission du flow `observeAll()`, on calcule le delta entre
- *   l'ensemble actuel et l'ensemble précédent.
- * - Configs ajoutées / activées → `ProxyLauncher.startLoopback(...)`
- * - Configs supprimées / désactivées → `ProxyLauncher.stopLoopback(...)`
+ * - On each emission of the `observeAll()` flow, the delta between the
+ *   current set and the previous one is computed.
+ * - Added / enabled configs: `ProxyLauncher.startLoopback(...)`
+ * - Deleted / disabled configs: `ProxyLauncher.stopLoopback(...)`
  *
- * Idempotent : démarrer un proxy déjà actif est un no-op côté service.
- * C'est le **seul** endroit qui (re)démarre les proxies loopback : les
- * écrans se contentent d'écrire en base.
+ * Idempotent: starting an already running proxy is a no-op in the service.
+ * This is the **only** place that (re)starts loopback proxies: screens only
+ * write to the database.
  */
 class LoopbackCoordinator(
     private val context: Context,
     private val repo: ConfigRepository,
     private val auditDao: AuditDao,
 ) {
-    /** Empreinte des champs que le core Rust copie au démarrage du proxy —
-     *  toute édition de l'un d'eux demande un restart (port, hôte, sni,
-     *  package, token, clé, certs…). enabled change déjà déclenche un
-     *  start/stop, pas besoin de le hasher. */
+    /** Fingerprint of the fields the Rust core copies when the proxy starts:
+     *  editing any of them requires a restart (port, host, sni, package,
+     *  token, key, certs...). A change of `enabled` already triggers a
+     *  start/stop, so it does not need to be hashed. */
     private data class ConfigFingerprint(
         val id: String,
         val targetPackage: String,
@@ -73,10 +74,10 @@ class LoopbackCoordinator(
     @Volatile private var lastFingerprints: Map<String, ConfigFingerprint> = emptyMap()
     private val started = AtomicBoolean(false)
 
-    /** Idempotent. À appeler depuis un contexte au premier plan (Activity). */
+    /** Idempotent. Call it from a foreground context (Activity). */
     fun start() {
         if (!started.compareAndSet(false, true)) return
-        // Purge des audit events plus vieux que la fenêtre glissante.
+        // Purge audit events older than the sliding window.
         scope.launch { auditDao.purgeOlderThan(System.currentTimeMillis() - AUDIT_RETENTION_MS) }
 
         scope.launch {
@@ -88,17 +89,17 @@ class LoopbackCoordinator(
                 }
                 .distinctUntilChanged()
                 .collect { current ->
-                    // Ajouts purs : on démarre.
+                    // Pure additions: start.
                     val added = current.keys - lastFingerprints.keys
-                    // Retraits purs : on arrête.
+                    // Pure removals: stop.
                     val removed = lastFingerprints.keys - current.keys
-                    // Présents des deux côtés mais fingerprint changé : restart
-                    // (édition du contenu sans toggle off/on manuel).
+                    // Present on both sides but fingerprint changed: restart
+                    // (content edited without a manual off/on toggle).
                     val changed = current.keys.intersect(lastFingerprints.keys)
                         .filter { current[it] != lastFingerprints[it] }
 
-                    // Démarrage refusé par l'OS (app passée en arrière-plan) :
-                    // non mémorisé, retenté à la prochaine émission.
+                    // Start refused by the OS (app moved to the background):
+                    // not remembered, retried on the next emission.
                     val refused = mutableSetOf<String>()
                     for (id in removed) ProxyLauncher.stopLoopback(context, id)
                     for (id in changed) {
@@ -114,7 +115,7 @@ class LoopbackCoordinator(
     }
 
     private companion object {
-        // 7 jours d'historique audit ; au-delà on purge à chaque démarrage app.
+        // 7 days of audit history; anything older is purged on each app start.
         const val AUDIT_RETENTION_MS = 7L * 24 * 60 * 60 * 1000
     }
 }

@@ -9,9 +9,9 @@ import com.douxev.mtls_bridge.runtime.AndroidPeerUidResolver
 import com.douxev.mtls_bridge.runtime.LoopbackCoordinator
 
 /**
- * Conteneur des singletons partagés. On évite Hilt côté MVP pour ne pas
- * ajouter une dépendance de compilation lourde — DI manuelle via Application,
- * récupéré par les Activity et ViewModels via `(application as MtlsApplication)`.
+ * Container for shared singletons. Hilt is avoided for the MVP to keep a heavy
+ * compile-time dependency out: manual DI through Application, retrieved by
+ * Activities and ViewModels via `(application as MtlsApplication)`.
  */
 class MtlsApplication : Application() {
 
@@ -21,20 +21,20 @@ class MtlsApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Active le logger Rust → adb logcat tag "mtls_bridge.rust".
+        // Enable the Rust logger (adb logcat tag "mtls_bridge.rust").
         com.douxev.mtls_bridge.ffi.initLogging()
-        // Pas de coordinator.start() ici : le process peut avoir été lancé en
-        // arrière-plan (receiver de notification, restart sticky du service) et
-        // Android 12+ y interdit startForegroundService
-        // (ForegroundServiceStartNotAllowedException). Le restart sticky est
-        // géré par LoopbackProxyService lui-même.
+        // No coordinator.start() here: the process may have been started in
+        // the background (notification receiver, sticky service restart) and
+        // Android 12+ forbids startForegroundService there
+        // (ForegroundServiceStartNotAllowedException). The sticky restart is
+        // handled by LoopbackProxyService itself.
     }
 
     /**
-     * Lance/coupe les services loopback en suivant le flag `enabled` des
-     * configs. Appelé par MainActivity (premier plan garanti) : à la première
-     * ouverture après reboot du device, ça redémarre tous les loopbacks qui
-     * étaient enabled. Idempotent.
+     * Starts/stops the loopback services according to the configs' `enabled`
+     * flag. Called by MainActivity (guaranteed foreground): on the first launch
+     * after a device reboot, this restarts every loopback that was enabled.
+     * Idempotent.
      */
     fun startLoopbackCoordinator() {
         coordinator.start()
@@ -54,8 +54,8 @@ class MtlsApplication : Application() {
     val peerUidResolver by lazy { AndroidPeerUidResolver(this) }
 
     /**
-     * État global d'activation du tunnel VPN. Set par MtlsVpnService.onCreate
-     * et clear par onDestroy. Observé par la liste pour piloter le toggle.
+     * Global activation state of the VPN tunnel. Set by MtlsVpnService.onCreate
+     * and cleared by onDestroy. Observed by the list screen to drive the toggle.
      */
     val vpnRunning: kotlinx.coroutines.flow.MutableStateFlow<Boolean> =
         kotlinx.coroutines.flow.MutableStateFlow(false)

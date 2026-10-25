@@ -1,13 +1,13 @@
-//! Mode VPN : on reçoit un `tun_fd` depuis le `VpnService` Android et on
-//! parse les paquets IP avec netstack-smoltcp pour reconstruire des sessions
-//! TCP utilisables comme des `AsyncRead+AsyncWrite`. Le routage se fait par
-//! couple `(IP_synthetique, port)` : la doxev configure son app cible avec
-//! `http://192.0.2.X:port` (TEST-NET, RFC 5737), et on mappe cette adresse
-//! vers la `ProxyConfig` correspondante.
+//! VPN mode: a `tun_fd` is received from the Android `VpnService` and the IP
+//! packets are parsed with netstack-smoltcp to rebuild TCP sessions usable as
+//! `AsyncRead+AsyncWrite`. Routing is done by `(synthetic_IP, port)` pair: the
+//! user configures their target app with `http://192.0.2.X:port` (TEST-NET,
+//! RFC 5737), and that address is mapped to the matching `ProxyConfig`.
 //!
-//! Sécurité : aucun UID check explicite n'est nécessaire dans ce mode parce
-//! que `VpnService.Builder.addAllowedApplication(pkg)` filtre les paquets au
-//! niveau du noyau Android avant qu'ils n'arrivent dans notre tun.
+//! Security: no explicit UID check is strictly required in this mode because
+//! `VpnService.Builder.addAllowedApplication(pkg)` filters packets at the
+//! Android kernel level before they reach our tun. A UID check is still done
+//! on every accept as defense in depth (see [`VpnRoute::expected_uid`]).
 
 #![cfg(any(target_os = "linux", target_os = "android"))]
 
@@ -29,17 +29,18 @@ use crate::error::{CoreError, Result};
 use crate::loopback::{AuditLogger, PeerUidResolver, ProxyEvent};
 use crate::proxy::{bridge_to_mtls_upstream, precompile_client_config, stop_requested};
 
-/// Une route VPN : une adresse synthétique → la config mTLS associée.
+/// A VPN route: a synthetic address -> the associated mTLS config.
 #[derive(Clone)]
 pub struct VpnRoute {
     pub synthetic_ip: IpAddr,
     pub synthetic_port: u16,
     pub config: Arc<ProxyConfig>,
-    /// UID Android attendu pour cette config (uid de targetPackage). On vérifie
-    /// que chaque connexion accepte par ce tun appartient bien à cet UID — en
-    /// plus de addAllowedApplication côté Kotlin qui filtre déjà au niveau
-    /// noyau. Défense en profondeur contre une appli autorisée qui essaierait
-    /// de viser l'IP synthétique d'une AUTRE app dans le même tun.
+    /// Android UID expected for this config (uid of targetPackage). Every
+    /// connection accepted through this tun is checked to belong to this UID,
+    /// on top of addAllowedApplication on the Kotlin side, which already
+    /// filters at the kernel level. Defense in depth against an authorized
+    /// app that would try to target the synthetic IP of ANOTHER app in the
+    /// same tun.
     pub expected_uid: u32,
 }
 
@@ -55,7 +56,7 @@ struct RouteEntry {
     expected_uid: u32,
 }
 
-/// Table de routage : (IP_synth, port) → route complète.
+/// Routing table: (synthetic_IP, port) -> full route.
 struct RoutingTable {
     table: HashMap<SocketAddr, RouteEntry>,
 }
@@ -78,7 +79,7 @@ impl RoutingTable {
                 .is_some()
             {
                 return Err(CoreError::Config(format!(
-                    "deux routes pointent sur la même IP synthétique {key}"
+                    "two routes point to the same synthetic IP {key}"
                 )));
             }
         }
@@ -91,8 +92,8 @@ impl RoutingTable {
 }
 
 // ---------------------------------------------------------------------------
-// Adapter Stream/Sink autour d'un tun_fd brut (typiquement transmis par
-// l'Android VpnService via ParcelFileDescriptor.detachFd()).
+// Stream/Sink adapter around a raw tun_fd (typically handed over by the
+// Android VpnService through ParcelFileDescriptor.detachFd()).
 // ---------------------------------------------------------------------------
 
 pub struct TunFd {
@@ -102,16 +103,16 @@ pub struct TunFd {
 }
 
 impl TunFd {
-    /// Adopte un fd brut. Le fd sera fermé quand `TunFd` est drop.
-    /// Le fd **doit** être en mode non-bloquant — sur Android, le fd renvoyé
-    /// par `VpnService.Builder.establish()` ne l'est pas par défaut, donc
-    /// on force `O_NONBLOCK` ici.
+    /// Takes ownership of a raw fd. The fd is closed when `TunFd` is dropped.
+    /// The fd **must** be in non-blocking mode: on Android, the fd returned
+    /// by `VpnService.Builder.establish()` is not by default, so `O_NONBLOCK`
+    /// is forced here.
     pub fn from_raw_fd(raw: RawFd, mtu: usize) -> Result<Self> {
         if raw < 0 {
-            return Err(CoreError::Config(format!("tun_fd invalide ({raw})")));
+            return Err(CoreError::Config(format!("invalid tun_fd ({raw})")));
         }
-        // SAFETY : l'appelant garantit l'unique propriété du fd (typiquement
-        // après ParcelFileDescriptor.detachFd() côté Kotlin).
+        // SAFETY: the caller guarantees sole ownership of the fd (typically
+        // after ParcelFileDescriptor.detachFd() on the Kotlin side).
         let owned = unsafe { OwnedFd::from_raw_fd(raw) };
         set_nonblocking(owned.as_raw_fd())?;
         Ok(Self {
@@ -123,7 +124,7 @@ impl TunFd {
 }
 
 fn set_nonblocking(fd: RawFd) -> Result<()> {
-    // SAFETY : appels libc directs sur un fd valide.
+    // SAFETY: direct libc calls on a valid fd.
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
     if flags < 0 {
         return Err(CoreError::Io(std::io::Error::last_os_error().to_string()));
@@ -147,7 +148,7 @@ impl Stream for TunFd {
             };
             let mut buf = vec![0u8; this.mtu];
             let res = guard.try_io(|inner| {
-                // SAFETY : buf valide pour mtu octets, fd valide géré par AsyncFd.
+                // SAFETY: buf is valid for mtu bytes, the fd is valid and managed by AsyncFd.
                 let n = unsafe {
                     libc::read(
                         inner.get_ref().as_raw_fd(),
@@ -180,7 +181,7 @@ impl Sink<AnyIpPktFrame> for TunFd {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<std::result::Result<(), Self::Error>> {
-        // Si on a un buffer pending, on doit d'abord le drainer.
+        // A pending buffer must be drained first.
         if self.write_buf.is_some() {
             self.poll_flush(cx)
         } else {
@@ -195,7 +196,7 @@ impl Sink<AnyIpPktFrame> for TunFd {
         let this = self.get_mut();
         debug_assert!(
             this.write_buf.is_none(),
-            "start_send sans poll_ready préalable"
+            "start_send without a prior poll_ready"
         );
         this.write_buf = Some(item);
         Ok(())
@@ -212,7 +213,7 @@ impl Sink<AnyIpPktFrame> for TunFd {
             };
             let mut guard = ready!(this.fd.poll_write_ready_mut(cx))?;
             let res = guard.try_io(|inner| {
-                // SAFETY : buf valide, fd valide géré par AsyncFd.
+                // SAFETY: buf is valid, the fd is valid and managed by AsyncFd.
                 let n = unsafe {
                     libc::write(
                         inner.get_ref().as_raw_fd(),
@@ -228,8 +229,8 @@ impl Sink<AnyIpPktFrame> for TunFd {
             });
             match res {
                 Ok(Ok(_n)) => {
-                    // Pour un tun device, write atomique : on envoie le paquet
-                    // entier en un syscall ou on échoue. Pas de partial-write.
+                    // On a tun device, writes are atomic: the whole packet is
+                    // sent in one syscall or the write fails. No partial write.
                     this.write_buf = None;
                     return Poll::Ready(Ok(()));
                 }
@@ -251,7 +252,7 @@ impl Sink<AnyIpPktFrame> for TunFd {
 }
 
 // ---------------------------------------------------------------------------
-// Public API : start_vpn(tun_fd, mtu, routes, audit) -> Arc<VpnHandle>
+// Public API: start_vpn(tun_fd, mtu, routes, audit) -> Arc<VpnHandle>
 // ---------------------------------------------------------------------------
 
 #[derive(uniffi::Object)]
@@ -262,8 +263,8 @@ pub struct VpnHandle {
 
 #[uniffi::export]
 impl VpnHandle {
-    /// Demande l'arrêt : le pont tun ↔ netstack s'interrompt (le tun_fd est
-    /// fermé) et toutes les sessions en cours sont fermées.
+    /// Requests a stop: the tun <-> netstack bridge stops (the tun_fd is
+    /// closed) and every ongoing session is closed.
     pub fn stop(&self) {
         let _ = self.stop_tx.send(true);
     }
@@ -288,9 +289,9 @@ pub async fn start_vpn(
     audit: Arc<dyn AuditLogger>,
 ) -> Result<Arc<VpnHandle>> {
     crate::init_crypto_provider();
-    // Adopter le fd AVANT toute étape faillible : resté brut, personne ne le
-    // fermerait si une route est invalide ou si netstack échoue, et
-    // l'interface VPN resterait montée.
+    // Take ownership of the fd BEFORE any fallible step: left raw, nobody
+    // would close it if a route is invalid or netstack fails, and the VPN
+    // interface would stay up.
     let tun = TunFd::from_raw_fd(tun_fd as RawFd, mtu as usize)?;
     let routing = Arc::new(RoutingTable::from_routes(routes)?);
 
@@ -303,28 +304,28 @@ pub async fn start_vpn(
         .build()
         .map_err(|e| CoreError::Internal(format!("netstack build: {e}")))?;
     let tcp_listener = tcp_listener
-        .ok_or_else(|| CoreError::Internal("tcp listener absent (tcp non activé ?)".into()))?;
+        .ok_or_else(|| CoreError::Internal("tcp listener missing (tcp not enabled?)".into()))?;
 
     let (stop_tx, stop_rx) = watch::channel(false);
     let mut tasks: Vec<JoinHandle<()>> = Vec::new();
 
-    // 1) Tâche runner du netstack (poll smoltcp interface).
+    // 1) Netstack runner task (polls the smoltcp interface).
     if let Some(runner) = tcp_runner {
         let mut stop_for_runner = stop_rx.clone();
         tasks.push(tokio::spawn(async move {
             tokio::select! {
                 () = stop_requested(&mut stop_for_runner) => {}
                 res = runner => match res {
-                    Ok(()) => log::warn!("netstack tcp_runner s'est terminé proprement"),
-                    Err(e) => log::error!("netstack tcp_runner a échoué: {e}"),
+                    Ok(()) => log::warn!("netstack tcp_runner exited cleanly"),
+                    Err(e) => log::error!("netstack tcp_runner failed: {e}"),
                 },
             }
         }));
     } else {
-        log::error!("pas de tcp_runner — TCP désactivé dans StackBuilder ?");
+        log::error!("no tcp_runner: is TCP disabled in StackBuilder?");
     }
 
-    // 2) Pont bidi tun ↔ stack.
+    // 2) Bidirectional tun <-> stack bridge.
     let (stack_sink, stack_stream) = stack.split();
     let (tun_sink, tun_stream) = tun.split();
     let mut stop_for_tun_to_stack = stop_rx.clone();
@@ -343,7 +344,7 @@ pub async fn start_vpn(
                         Some(Ok(p)) => {
                             counter += 1;
                             if counter <= 20 || counter % 100 == 0 {
-                                log::info!("tun→stack #{counter} len={}", p.len());
+                                log::info!("tun->stack #{counter} len={}", p.len());
                             }
                             if let Err(e) = stack_sink.send(p).await {
                                 log::error!("stack_sink.send failed: {e}");
@@ -380,7 +381,7 @@ pub async fn start_vpn(
                         Some(Ok(p)) => {
                             counter += 1;
                             if counter <= 20 || counter % 100 == 0 {
-                                log::info!("stack→tun #{counter} len={}", p.len());
+                                log::info!("stack->tun #{counter} len={}", p.len());
                             }
                             if let Err(e) = tun_sink.send(p).await {
                                 log::error!("tun_sink.send failed: {e}");
@@ -401,26 +402,26 @@ pub async fn start_vpn(
         }
     }));
 
-    // 3) Accept loop : pour chaque TCP virtuel, lookup dans la routing table
-    //    puis bridge mTLS.
+    // 3) Accept loop: for each virtual TCP connection, look up the routing
+    //    table, then bridge to mTLS.
     let mut stop_for_accept = stop_rx;
     let routing_for_accept = Arc::clone(&routing);
     let audit_for_accept = Arc::clone(&audit);
     let uid_resolver_for_accept = Arc::clone(&uid_resolver);
     tasks.push(tokio::spawn(async move {
         let mut listener = tcp_listener;
-        // Sessions en cours : abortées ensemble à l'arrêt.
+        // Ongoing sessions: aborted together on stop.
         let mut sessions = JoinSet::new();
         loop {
             tokio::select! {
                 biased;
                 () = stop_requested(&mut stop_for_accept) => break,
-                // Récolte des sessions terminées, sinon le JoinSet grossit.
+                // Reap finished sessions, otherwise the JoinSet keeps growing.
                 Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
                 next = listener.next() => {
-                    // ATTENTION sémantique netstack-smoltcp inversée :
-                    // - local_addr  = src_addr (= l'app cliente, IP du tun + port éphémère)
-                    // - remote_addr = dst_addr (= NOTRE IP synthétique, clé de routage)
+                    // CAUTION, netstack-smoltcp semantics are inverted:
+                    // - local_addr  = src_addr (= the client app, tun IP + ephemeral port)
+                    // - remote_addr = dst_addr (= OUR synthetic IP, the routing key)
                     let Some((stream, src_addr, dst_addr)) = next else { break; };
                     let Some(route) = routing_for_accept.lookup(dst_addr) else {
                         audit_for_accept.record(ProxyEvent::VpnRouteMissing {
@@ -433,18 +434,20 @@ pub async fn start_vpn(
                     let cc = Arc::clone(&route.client_config);
                     let expected_uid = route.expected_uid;
 
-                    // Défense en profondeur : addAllowedApplication filtre déjà
-                    // les paquets au niveau noyau (une app non autorisée NE
-                    // PEUT PAS arriver ici). Mais SI deux apps sont allow-listed
-                    // et que l'une vise l'IP synthétique de l'autre, on doit
-                    // refuser : sinon elle obtiendrait le cert mTLS de l'autre.
+                    // Defense in depth: addAllowedApplication already filters
+                    // packets at the kernel level (an unauthorized app CANNOT
+                    // get here). But IF two apps are allow-listed and one
+                    // targets the synthetic IP of the other, the connection
+                    // must be refused: otherwise it would get the other app's
+                    // mTLS cert.
                     //
-                    // Convention "depuis le pair" : son local = src_addr (son
-                    // ephémère dans le tun), son remote = dst_addr (notre IP
-                    // synthétique). Si l'API Android ne sait pas lire les
-                    // sockets VPN-routés (= renvoie None), on **soft-fail** :
-                    // on log un avertissement et on accepte, parce que la
-                    // garantie addAllowedApplication reste tenue par l'OS.
+                    // "From the peer" convention: its local = src_addr (its
+                    // ephemeral port in the tun), its remote = dst_addr (our
+                    // synthetic IP). If the Android API cannot read
+                    // VPN-routed sockets (returns None), this **soft-fails**:
+                    // a warning is logged and the connection is accepted,
+                    // because the addAllowedApplication guarantee is still
+                    // enforced by the OS.
                     let uid_opt = crate::runtime::blocking(|| {
                         uid_resolver_for_accept.peer_uid(
                             src_addr.ip().to_string(),
@@ -465,11 +468,11 @@ pub async fn start_vpn(
                         }
                         Some(_) => {} // OK, UID match
                         None => {
-                            // L'API ne supporte pas les sockets VPN sur ce
-                            // device — on continue en mode "OS-enforced only".
+                            // The API does not support VPN sockets on this
+                            // device: continue in "OS-enforced only" mode.
                             log::debug!(
-                                "VPN UID lookup unsupported pour {src_addr}↔{dst_addr}, \
-                                 fallback addAllowedApplication"
+                                "VPN UID lookup unsupported for {src_addr}<->{dst_addr}, \
+                                 falling back to addAllowedApplication"
                             );
                         }
                     }
@@ -481,9 +484,9 @@ pub async fn start_vpn(
                     let cfg_inner = Arc::clone(&cfg);
                     let audit_inner = Arc::clone(&audit_for_accept);
                     sessions.spawn(async move {
-                        // Mode VPN : pas de réécriture de réponse — la cible voit
-                        // déjà directement l'IP synthétique, pas d'URL loopback
-                        // canonique vers laquelle réécrire les URLs upstream.
+                        // VPN mode: no response rewriting. The target already
+                        // sees the synthetic IP directly, so there is no
+                        // canonical loopback URL to rewrite upstream URLs to.
                         if let Err(e) = bridge_to_mtls_upstream(stream, cc, &cfg_inner, None).await {
                             audit_inner.record(ProxyEvent::BridgeFailed {
                                 config_id: cfg_inner.id.clone(),

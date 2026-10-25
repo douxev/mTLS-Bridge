@@ -11,23 +11,22 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Relance les proxys loopback `enabled` au démarrage de l'appareil et après
- * une mise à jour de l'app. Indispensable sur Android TV : le téléviseur
- * redémarre souvent (veille profonde, coupure secteur) et l'utilisatrice
- * lance Jellyfin directement depuis l'écran d'accueil, sans ouvrir mTLS
- * Bridge. Démarrer un service de premier plan depuis BOOT_COMPLETED est
- * autorisé pour le type `specialUse`.
+ * Restarts the `enabled` loopback proxies when the device boots and after an
+ * app update. Essential on Android TV: the TV restarts often (deep sleep,
+ * power cut) and the user launches Jellyfin straight from the home screen,
+ * without opening mTLS Bridge. Starting a foreground service from
+ * BOOT_COMPLETED is allowed for the `specialUse` type.
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED -> {
-                Log.i(TAG, "${intent.action} : restauration des proxys actifs")
+                Log.i(TAG, "${intent.action}: restoring active proxies")
                 (context.applicationContext as MtlsApplication).startLoopbackCoordinator()
-                // Le coordinateur lit la base chiffrée puis démarre le service
-                // de façon asynchrone : on garde le process en vie le temps
-                // qu'il le fasse (le service le maintient ensuite).
+                // The coordinator reads the encrypted database then starts the
+                // service asynchronously: keep the process alive long enough
+                // for it to do so (the service keeps it alive afterwards).
                 val pending = goAsync()
                 CoroutineScope(Dispatchers.Default).launch {
                     delay(START_GRACE_MS)

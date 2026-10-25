@@ -1,11 +1,11 @@
-//! Isolation du mode loopback, de bout en bout contre un vrai serveur mTLS :
-//! - aucune connexion upstream (donc aucune signature avec la clé client)
-//!   tant que la première requête n'a pas été lue et validée,
-//! - le cookie de session posé par une URL avec token laisse passer les
-//!   chemins absolus des webviews, ne part jamais vers l'upstream et ne
-//!   survit pas à un redémarrage du proxy,
-//! - une signature Keystore lente ne bloque pas les autres sessions,
-//! - chaque refus du token est audité.
+//! Loopback mode isolation, end to end against a real mTLS server:
+//! - no upstream connection (hence no signature with the client key) until
+//!   the first request has been read and validated,
+//! - the session cookie set by a URL with the token lets webview absolute
+//!   paths through, never goes to the upstream and does not survive a proxy
+//!   restart,
+//! - a slow Keystore signature does not block the other sessions,
+//! - every token rejection is audited.
 
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -28,8 +28,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
 
-// --- PKI helpers (dupliqués volontairement : chaque fichier de test reste
-// autonome). ---
+// --- PKI helpers (deliberately duplicated: each test file stays
+// self-contained). ---
 
 struct Pki {
     ca_pem: Vec<u8>,
@@ -89,8 +89,8 @@ fn parse_pkcs8(pem: &[u8]) -> PrivateKeyDer<'static> {
     PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.secret_pkcs8_der().to_vec()))
 }
 
-/// Lit une réponse HTTP/1.1 complète (headers + body Content-Length).
-/// `None` sur EOF avant la moindre donnée.
+/// Reads a complete HTTP/1.1 response (headers + Content-Length body).
+/// `None` on EOF before any data.
 async fn read_response<S: AsyncRead + Unpin>(
     s: &mut S,
     buf: &mut Vec<u8>,
@@ -117,7 +117,7 @@ async fn read_response<S: AsyncRead + Unpin>(
         .unwrap_or(0);
     while buf.len() < head_end + len {
         let n = s.read(&mut tmp).await.unwrap();
-        assert!(n > 0, "EOF au milieu du body");
+        assert!(n > 0, "EOF in the middle of the body");
         buf.extend_from_slice(&tmp[..n]);
     }
     let body = buf[head_end..head_end + len].to_vec();
@@ -125,12 +125,12 @@ async fn read_response<S: AsyncRead + Unpin>(
     Some((head, body))
 }
 
-/// Serveur HTTPS mTLS keepalive qui compte les connexions TCP acceptées.
-/// - `/next…` → `next-ok`,
-/// - `/cookie` → la valeur du header `Cookie` reçu (vide si absent).
+/// Keep-alive mTLS HTTPS server that counts accepted TCP connections.
+/// - `/next...` -> `next-ok`,
+/// - `/cookie` -> the value of the received `Cookie` header (empty if absent).
 ///
-/// Sans reprise de session TLS : chaque connexion refait un handshake
-/// complet, donc une signature avec la clé client.
+/// No TLS session resumption: every connection performs a full handshake,
+/// hence a signature with the client key.
 async fn spawn_counting_server(pki: &Pki) -> (u16, Arc<AtomicUsize>) {
     let mut roots = RootCertStore::empty();
     for ca in parse_certs(&pki.ca_pem) {
@@ -252,27 +252,27 @@ async fn get(
     send_get(s, path, extra_headers).await;
     tokio::time::timeout(Duration::from_secs(5), read_response(s, buf))
         .await
-        .expect("timeout en attente de la réponse")
-        .expect("connexion fermée au lieu d'une réponse")
+        .expect("timeout waiting for the response")
+        .expect("connection closed instead of a response")
 }
 
-/// Le proxy ferme la connexion sans rien répondre.
+/// The proxy closes the connection without answering anything.
 async fn assert_closed_without_response(s: &mut TcpStream) {
     let mut out = Vec::new();
     tokio::time::timeout(Duration::from_secs(5), s.read_to_end(&mut out))
         .await
-        .expect("le proxy doit fermer la connexion")
+        .expect("the proxy must close the connection")
         .ok();
     assert!(
         out.is_empty(),
-        "aucune réponse attendue, reçu {:?}",
+        "no response expected, got {:?}",
         String::from_utf8_lossy(&out)
     );
 }
 
-/// Motifs des refus de token audités, une fois qu'il y en a `n` (l'événement
-/// est enregistré à la fin de la session, juste après la fermeture vue par
-/// le client).
+/// Reasons of the audited token rejections, once there are `n` of them (the
+/// event is recorded at the end of the session, right after the close seen
+/// by the client).
 async fn token_rejections(audit: &CollectingAudit, n: usize) -> Vec<TokenRejection> {
     let collect = || -> Vec<TokenRejection> {
         audit
@@ -302,7 +302,7 @@ fn session_cookie(head: &str) -> String {
     let line = head
         .lines()
         .find(|l| l.starts_with("Set-Cookie: mtlsb_"))
-        .unwrap_or_else(|| panic!("Set-Cookie de session absent: {head}"));
+        .unwrap_or_else(|| panic!("session Set-Cookie missing: {head}"));
     let value = line.strip_prefix("Set-Cookie: ").unwrap();
     assert!(
         value.ends_with("; HttpOnly; SameSite=Strict; Path=/"),
@@ -313,8 +313,8 @@ fn session_cookie(head: &str) -> String {
 
 // --- Tests ---
 
-/// Connexions locales sans token valide : jamais de connexion upstream,
-/// donc jamais de handshake mTLS ni de signature avec la clé client.
+/// Local connections without a valid token: never an upstream connection,
+/// hence never an mTLS handshake nor a signature with the client key.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn no_upstream_connection_before_first_request_is_validated() -> Result<()> {
     init_crypto_provider();
@@ -332,28 +332,28 @@ async fn no_upstream_connection_before_first_request_is_validated() -> Result<()
     .await?;
     let port = h.port();
 
-    // Connexion ouverte puis fermée sans rien envoyer.
+    // Connection opened then closed without sending anything.
     drop(TcpStream::connect(("127.0.0.1", port)).await?);
-    // Connexion ouverte qui n'envoie rien (scan de port) : reste ouverte.
+    // Open connection that sends nothing (port scan): stays open.
     let idle = TcpStream::connect(("127.0.0.1", port)).await?;
-    // Requête sans token ni cookie.
+    // Request with neither token nor cookie.
     let mut s = TcpStream::connect(("127.0.0.1", port)).await?;
     send_get(&mut s, "/next", "").await;
     assert_closed_without_response(&mut s).await;
-    // Mauvais token.
+    // Wrong token.
     let mut s = TcpStream::connect(("127.0.0.1", port)).await?;
     send_get(&mut s, "/TOK12/next", "").await;
     assert_closed_without_response(&mut s).await;
-    // Cookie forgé.
+    // Forged cookie.
     let mut s = TcpStream::connect(("127.0.0.1", port)).await?;
     send_get(&mut s, "/next", "Cookie: mtlsb_iso=00\r\n").await;
     assert_closed_without_response(&mut s).await;
-    // Pas du HTTP (ClientHello TLS direct sur le port).
+    // Not HTTP (TLS ClientHello sent directly to the port).
     let mut s = TcpStream::connect(("127.0.0.1", port)).await?;
     s.write_all(b"\x16\x03\x01\x00\xa5\x01\x00\x00\xa1\x03\x03\r\n\r\n")
         .await?;
     assert_closed_without_response(&mut s).await;
-    // Headers incomplets puis fermeture.
+    // Incomplete headers, then close.
     let mut s = TcpStream::connect(("127.0.0.1", port)).await?;
     s.write_all(b"GET /TOK123/next HTTP/1.1\r\nHo").await?;
     s.shutdown().await?;
@@ -363,22 +363,22 @@ async fn no_upstream_connection_before_first_request_is_validated() -> Result<()
     assert_eq!(
         accepted.load(Ordering::SeqCst),
         0,
-        "aucune connexion upstream attendue"
+        "no upstream connection expected"
     );
 
-    // Requête légitime : une seule connexion upstream, la sienne.
+    // Legitimate request: a single upstream connection, its own.
     let mut s = TcpStream::connect(("127.0.0.1", port)).await?;
     let mut buf = Vec::new();
     let (head, body) = get(&mut s, &mut buf, "/TOK123/next", "").await;
     assert!(head.starts_with("HTTP/1.1 200"), "head: {head}");
     assert_eq!(body, b"next-ok");
     assert_eq!(accepted.load(Ordering::SeqCst), 1);
-    // Requête suivante de la même connexion, sans token ni cookie : coupée.
+    // Next request on the same connection, with neither token nor cookie: cut.
     send_get(&mut s, "/next", "").await;
     assert_closed_without_response(&mut s).await;
 
-    // Chaque refus est audité avec son motif ; les headers incomplets
-    // (client parti) ne sont pas un refus.
+    // Every rejection is audited with its reason; incomplete headers (client
+    // gone) are not a rejection.
     let mut rejections = token_rejections(&audit, 5).await;
     rejections.sort_by_key(|r| *r as u8);
     assert_eq!(
@@ -404,9 +404,9 @@ async fn no_upstream_connection_before_first_request_is_validated() -> Result<()
     Ok(())
 }
 
-/// Parcours webview : la page d'entrée porte le token et reçoit le cookie ;
-/// les chemins absolus `/…` qui suivent passent grâce au cookie, que
-/// l'upstream ne voit jamais. Un redémarrage du proxy invalide le cookie.
+/// Webview flow: the entry page carries the token and receives the cookie;
+/// the absolute paths `/...` that follow get through thanks to the cookie,
+/// which the upstream never sees. A proxy restart invalidates the cookie.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn session_cookie_lets_absolute_paths_through() -> Result<()> {
     init_crypto_provider();
@@ -429,8 +429,8 @@ async fn session_cookie_lets_absolute_paths_through() -> Result<()> {
     let cookie = session_cookie(&head);
     assert!(cookie.starts_with("mtlsb_iso="), "{cookie}");
 
-    // Nouvelle connexion, chemin absolu sans token : accepté via le cookie,
-    // qui est retiré avant l'upstream (les autres cookies passent).
+    // New connection, absolute path without the token: accepted through the
+    // cookie, which is removed before the upstream (other cookies get through).
     let mut s = TcpStream::connect(("127.0.0.1", h.port())).await?;
     let mut buf = Vec::new();
     let (head, body) = get(
@@ -444,13 +444,13 @@ async fn session_cookie_lets_absolute_paths_through() -> Result<()> {
     assert_eq!(
         String::from_utf8(body).unwrap(),
         "lang=fr",
-        "Cookie vu par l'upstream"
+        "Cookie seen by the upstream"
     );
     assert!(
         !head.contains("Set-Cookie"),
-        "cookie valide : rien à reposer: {head}"
+        "valid cookie: nothing to set again: {head}"
     );
-    // Même connexion keepalive : toujours accepté.
+    // Same keep-alive connection: still accepted.
     let (_, body) = get(
         &mut s,
         &mut buf,
@@ -458,9 +458,9 @@ async fn session_cookie_lets_absolute_paths_through() -> Result<()> {
         &format!("Cookie: {cookie}\r\n"),
     )
     .await;
-    assert!(body.is_empty(), "header Cookie retiré en entier");
+    assert!(body.is_empty(), "Cookie header removed entirely");
 
-    // Redémarrage : nouveau secret, l'ancien cookie ne vaut plus rien.
+    // Restart: new secret, the old cookie is now worthless.
     h.stop();
     let h = start_loopback(cfg, 0, 1234, Arc::new(NoUid), audit as Arc<dyn AuditLogger>).await?;
     let mut s = TcpStream::connect(("127.0.0.1", h.port())).await?;
@@ -481,10 +481,10 @@ async fn session_cookie_lets_absolute_paths_through() -> Result<()> {
     Ok(())
 }
 
-// --- Signature Keystore lente ---
+// --- Slow Keystore signature ---
 
-/// Signer « Keystore » de test (clé en RAM) dont la prochaine signature
-/// peut être bloquée jusqu'à libération, comme un TEE/StrongBox lent.
+/// Test "Keystore" signer (key in RAM) whose next signature can be blocked
+/// until released, like a slow TEE/StrongBox.
 struct GatedSigner {
     key: Arc<dyn rustls::sign::SigningKey>,
     armed: AtomicBool,
@@ -501,7 +501,7 @@ impl KeystoreSigner for GatedSigner {
     ) -> std::result::Result<Vec<u8>, SignerError> {
         if self.armed.swap(false, Ordering::SeqCst) {
             let _ = self.entered.send(());
-            // Appel synchrone bloquant, comme le callback Kotlin.
+            // Blocking synchronous call, like the Kotlin callback.
             let _ = self
                 .release
                 .lock()
@@ -520,9 +520,9 @@ impl KeystoreSigner for GatedSigner {
     }
 }
 
-/// Démarré comme depuis Kotlin (entrée FFI) : pendant qu'une nouvelle
-/// connexion attend sa signature Keystore, une session déjà établie
-/// continue d'être servie.
+/// Started as from Kotlin (FFI entry point): while a new connection waits
+/// for its Keystore signature, an already established session keeps being
+/// served.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn slow_keystore_signature_does_not_stall_other_sessions() -> Result<()> {
     init_crypto_provider();
@@ -557,21 +557,21 @@ async fn slow_keystore_signature_does_not_stall_other_sessions() -> Result<()> {
     )
     .await?;
 
-    // Session B établie (signature immédiate).
+    // Session B established (immediate signature).
     let mut b = TcpStream::connect(("127.0.0.1", h.port())).await?;
     let mut b_buf = Vec::new();
     let (_, body) = get(&mut b, &mut b_buf, "/next", "").await;
     assert_eq!(body, b"next-ok");
 
-    // Connexion A : son handshake reste bloqué dans la signature.
+    // Connection A: its handshake stays blocked in the signature.
     signer.armed.store(true, Ordering::SeqCst);
     let mut a = TcpStream::connect(("127.0.0.1", h.port())).await?;
     send_get(&mut a, "/next", "").await;
     tokio::time::timeout(Duration::from_secs(5), entered_rx.recv())
         .await
-        .expect("la connexion A doit atteindre la signature");
+        .expect("connection A must reach the signature");
 
-    // B est toujours servie pendant ce temps.
+    // B is still served in the meantime.
     let res = tokio::time::timeout(Duration::from_secs(3), async {
         send_get(&mut b, "/next", "").await;
         read_response(&mut b, &mut b_buf).await
@@ -579,16 +579,16 @@ async fn slow_keystore_signature_does_not_stall_other_sessions() -> Result<()> {
     .await;
     release_tx.send(()).unwrap();
     let (_, body) = res
-        .expect("session B bloquée par la signature de A")
-        .expect("session B fermée");
+        .expect("session B blocked by the signature of A")
+        .expect("session B closed");
     assert_eq!(body, b"next-ok");
 
-    // A aboutit une fois la signature rendue.
+    // A completes once the signature is returned.
     let mut a_buf = Vec::new();
     let (_, body) = tokio::time::timeout(Duration::from_secs(5), read_response(&mut a, &mut a_buf))
         .await
-        .expect("la connexion A doit aboutir")
-        .expect("connexion A fermée");
+        .expect("connection A must complete")
+        .expect("connection A closed");
     assert_eq!(body, b"next-ok");
     h.stop();
     Ok(())

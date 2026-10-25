@@ -12,11 +12,10 @@ import com.douxev.mtls_bridge.R
 
 internal object ProxyNotifications {
     const val CHANNEL_ID = "mtls_bridge-proxy"
-    private const val CHANNEL_NAME = "Proxy mTLS actif"
     const val LOOPBACK_NOTIFICATION_ID = 1001
     const val VPN_NOTIFICATION_ID = 1002
 
-    /** Action broadcast envoyée par le bouton Stop de la notification VPN. */
+    /** Broadcast action sent by the Stop button of the VPN notification. */
     const val ACTION_STOP_VPN = "com.douxev.mtls_bridge.STOP_VPN"
     const val ACTION_STOP_LOOPBACK = "com.douxev.mtls_bridge.STOP_LOOPBACK"
 
@@ -27,10 +26,10 @@ internal object ProxyNotifications {
                 mgr.createNotificationChannel(
                     NotificationChannel(
                         CHANNEL_ID,
-                        CHANNEL_NAME,
+                        context.getString(R.string.svc_channel_name),
                         NotificationManager.IMPORTANCE_LOW,
                     ).apply {
-                        description = "Affichée tant qu'un proxy mTLS tourne en fond"
+                        description = context.getString(R.string.svc_channel_description)
                     }
                 )
             }
@@ -53,7 +52,7 @@ internal object ProxyNotifications {
             .setContentText(text)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Arrêter VPN", stopPI)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, context.getString(R.string.svc_action_stop_vpn), stopPI)
             .build()
     }
 
@@ -73,7 +72,7 @@ internal object ProxyNotifications {
             .setContentText(text)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Arrêter", stopPI)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, context.getString(R.string.svc_action_stop), stopPI)
             .build()
     }
 }

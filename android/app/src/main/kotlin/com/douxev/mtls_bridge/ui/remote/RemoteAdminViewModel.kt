@@ -9,9 +9,9 @@ import com.douxev.mtls_bridge.remote.RemoteAdminServer
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * La console LAN vit aussi longtemps que l'écran « Configuration à
- * distance » : démarrée à l'ouverture, arrêtée quand on le quitte (ViewModel
- * détruit). Elle survit aux rotations et à un passage en arrière-plan bref.
+ * The LAN console lives as long as the "Remote configuration" screen: started
+ * when it opens, stopped when it is left (ViewModel destroyed). It survives
+ * rotations and short trips to the background.
  */
 class RemoteAdminViewModel(app: MtlsApplication) : ViewModel() {
     private val server = RemoteAdminServer(app)

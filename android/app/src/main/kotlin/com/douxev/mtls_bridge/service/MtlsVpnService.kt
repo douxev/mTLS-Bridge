@@ -11,6 +11,7 @@ import android.system.Os
 import android.system.StructStat
 import android.util.Log
 import com.douxev.mtls_bridge.MtlsApplication
+import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.data.ConfigEntity
 import com.douxev.mtls_bridge.data.ProxyMode
 import com.douxev.mtls_bridge.data.SyntheticEndpoints
@@ -30,23 +31,23 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * VPN locale qui sert N configs simultanément. Pour chacune :
- *  - addAllowedApplication(targetPackage) → seul l'UID de cette app peut
- *    écrire des paquets dans le tun.
- *  - addRoute(synthetic_ip/32) → seul l'IP synthétique de la config est
- *    routée vers nous.
- *  - VpnRouteSpec(ip, port, ProxyConfigSpec) côté Rust → table de routage.
+ * Local VPN serving N configs at once. For each of them:
+ *  - addAllowedApplication(targetPackage): only this app's UID can write
+ *    packets into the tun.
+ *  - addRoute(synthetic_ip/32): only the config's synthetic IP is routed to
+ *    us.
+ *  - VpnRouteSpec(ip, port, ProxyConfigSpec) on the Rust side: routing table.
  *
- * Arrêt : `ACTION_STOP` (bouton de la liste ou de la notification) ou
- * `onRevoke()`. Un simple stopService() ne suffit pas : tant que le tun est
- * ouvert, le système reste lié au service et onDestroy n'est jamais appelé.
+ * Shutdown: `ACTION_STOP` (button in the list or in the notification) or
+ * `onRevoke()`. A plain stopService() is not enough: while the tun is open,
+ * the system stays bound to the service and onDestroy is never called.
  */
 class MtlsVpnService : VpnService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    /** Sérialise boot/arrêt : un second onStartCommand attend la fin du premier. */
+    /** Serializes boot/stop: a second onStartCommand waits for the first to finish. */
     private val tunnelMutex = Mutex()
-    // Gardés par `synchronized(this)` : onDestroy (main) peut croiser boot (IO).
+    // Guarded by `synchronized(this)`: onDestroy (main) may overlap boot (IO).
     private var handle: VpnHandle? = null
     private var auditLogger: AuditLoggerImpl? = null
     private var destroyed = false
@@ -68,14 +69,14 @@ class MtlsVpnService : VpnService() {
         app.vpnRunning.value = true
         scope.launch {
             tunnelMutex.withLock {
-                // Le scope n'a pas de handler : une exception non rattrapée
-                // ferait planter tout le process.
+                // The scope has no handler: an uncaught exception would crash
+                // the whole process.
                 try {
                     boot(startId)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (t: Throwable) {
-                    Log.e(TAG, "boot VPN en échec : ${t.message}", t)
+                    Log.e(TAG, "VPN boot failed: ${t.message}", t)
                     failBoot(startId)
                 }
             }
@@ -83,7 +84,7 @@ class MtlsVpnService : VpnService() {
         return START_NOT_STICKY
     }
 
-    /** Consentement retiré (réglages) ou autre app VPN activée. */
+    /** Consent revoked (settings) or another VPN app enabled. */
     override fun onRevoke() {
         scope.launch {
             tunnelMutex.withLock { stopTunnel() }
@@ -95,13 +96,13 @@ class MtlsVpnService : VpnService() {
     private fun startInForeground() {
         val n = ProxyNotifications.buildVpn(
             this,
-            title = "Tunnel mTLS",
-            text = "VPN locale active — tape Arrêter pour stopper",
+            title = getString(R.string.svc_vpn_notif_title),
+            text = getString(R.string.svc_vpn_notif_text),
         )
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                // systemExempted : type prévu pour les apps VPN dont le
-                // consentement VpnService.prepare() est accordé.
+                // systemExempted: the type intended for VPN apps whose
+                // VpnService.prepare() consent has been granted.
                 startForeground(
                     ProxyNotifications.VPN_NOTIFICATION_ID,
                     n,
@@ -111,40 +112,40 @@ class MtlsVpnService : VpnService() {
                 startForeground(ProxyNotifications.VPN_NOTIFICATION_ID, n)
             }
         } catch (e: RuntimeException) {
-            // Démarré par startService (cf. ProxyLauncher) : pas de crash si
-            // l'OS refuse, le tun lié par le système garde le service en vie.
-            Log.e(TAG, "startForeground refusé : ${e.message}", e)
+            // Started by startService (see ProxyLauncher): no crash if the OS
+            // refuses, the tun bound by the system keeps the service alive.
+            Log.e(TAG, "startForeground refused: ${e.message}", e)
         }
     }
 
     private suspend fun boot(startId: Int) {
-        // onStartCommand rappelé (toggle, always-on…) : on coupe l'ancien tun
-        // et son handle avant d'en établir un nouveau, jamais deux en parallèle.
+        // onStartCommand called again (toggle, always-on...): shut down the old
+        // tun and its handle before establishing a new one, never two at once.
         stopTunnel()
 
         val app = application as MtlsApplication
         val configs: List<ConfigEntity> = app.configRepo.observeAll()
             .first()
             .filter { it.mode == ProxyMode.VPN && !it.needsKeystoreRefresh }
-        Log.i(TAG, "boot: ${configs.size} config(s) VPN trouvée(s)")
+        Log.i(TAG, "boot: ${configs.size} VPN config(s) found")
         val routes = buildRoutes(configs)
         if (routes.isEmpty()) {
-            Log.e(TAG, "aucune route VPN valide — la VPN ne servirait à rien. Stop.")
+            Log.e(TAG, "no valid VPN route, the VPN would be useless. Stopping.")
             failBoot(startId)
             return
         }
 
-        // On place tun-address ET destinations dans le MÊME /24, sinon le kernel
-        // peut refuser de livrer les SYN-ACK (source 192.0.2.X non considérée
-        // comme locale au tun). Le /24 sur la totalité de TEST-NET garantit
-        // que tout le sous-réseau est routé via notre tun.
+        // The tun address AND the destinations are put in the SAME /24,
+        // otherwise the kernel may refuse to deliver SYN-ACKs (source
+        // 192.0.2.X not considered local to the tun). The /24 covering the
+        // whole TEST-NET guarantees the entire subnet is routed via our tun.
         val builder = Builder()
-            .setSession("mTLS Wrapper")
+            .setSession("mTLS Bridge")
             .setMtu(mtu)
             .addAddress(SyntheticEndpoints.TUN_LOCAL_IP, SyntheticEndpoints.TUN_PREFIX)
             .addRoute(SyntheticEndpoints.TUN_NET, SyntheticEndpoints.TUN_PREFIX)
-            // Le tun ne transporte que du trafic local vers 192.0.2.0/24 : il ne
-            // doit pas faire passer le réseau sous-jacent pour « mesuré ».
+            // The tun only carries local traffic to 192.0.2.0/24: it must not
+            // make the underlying network look "metered".
             .setMetered(false)
             .setBlocking(false)
         var allowedCount = 0
@@ -154,27 +155,27 @@ class MtlsVpnService : VpnService() {
             if (pkgAdded.isSuccess) allowedCount++
         }
         if (allowedCount == 0) {
-            Log.e(TAG, "AUCUNE app autorisée — la VPN ne servirait à rien. Stop.")
+            Log.e(TAG, "NO allowed app, the VPN would be useless. Stopping.")
             failBoot(startId)
             return
         }
         val pfd = try {
             builder.establish()
         } catch (e: RuntimeException) {
-            Log.e(TAG, "establish() a échoué : ${e.message}", e)
+            Log.e(TAG, "establish() failed: ${e.message}", e)
             null
         }
         if (pfd == null) {
-            Log.e(TAG, "VpnService.establish() returned null — permission VPN refusée ?")
+            Log.e(TAG, "VpnService.establish() returned null: VPN permission denied?")
             failBoot(startId)
             return
         }
-        // Identité du fichier tun, pour savoir après coup si le core a déjà
-        // fermé le fd (voir closeTunFdIfStillOpen).
+        // Identity of the tun file, to find out later whether the core has
+        // already closed the fd (see closeTunFdIfStillOpen).
         val tunStat = try {
             Os.fstat(pfd.fileDescriptor)
         } catch (e: ErrnoException) {
-            Log.e(TAG, "fstat du tun : ${e.message}", e)
+            Log.e(TAG, "fstat of the tun: ${e.message}", e)
             pfd.close()
             failBoot(startId)
             return
@@ -182,12 +183,12 @@ class MtlsVpnService : VpnService() {
         val fd = pfd.detachFd()
         Log.i(
             TAG,
-            "tun établi, fd=$fd, route ${SyntheticEndpoints.TUN_NET}/${SyntheticEndpoints.TUN_PREFIX}, " +
+            "tun established, fd=$fd, route ${SyntheticEndpoints.TUN_NET}/${SyntheticEndpoints.TUN_PREFIX}, " +
                 "addresses=${SyntheticEndpoints.TUN_LOCAL_IP}/${SyntheticEndpoints.TUN_PREFIX}",
         )
 
-        // Un seul audit logger pour tous les événements VPN ; il dispatch par
-        // configId présent dans l'événement (ou broadcast si null).
+        // A single audit logger for every VPN event; it dispatches by the
+        // configId carried by the event (or broadcasts if null).
         val audit = AuditLoggerImpl(
             allConfigIds = configs.map { it.id },
             dao = app.db.auditDao(),
@@ -202,9 +203,9 @@ class MtlsVpnService : VpnService() {
                 audit = audit,
             )
         } catch (t: Throwable) {
-            // Le core n'adopte le fd qu'après avoir validé routes et PEM : sur
-            // ces erreurs il reste ouvert et le tun avec lui → on le ferme.
-            Log.e(TAG, "startVpnProxy a throw : ${t.message}", t)
+            // The core only adopts the fd after validating routes and PEM: on
+            // these errors it stays open, and the tun with it, so close it.
+            Log.e(TAG, "startVpnProxy threw: ${t.message}", t)
             closeTunFdIfStillOpen(fd, tunStat)
             audit.stop()
             failBoot(startId)
@@ -225,32 +226,32 @@ class MtlsVpnService : VpnService() {
             audit.stop()
             return
         }
-        Log.i(TAG, "startVpnProxy OK — ${routes.size} route(s) actives")
+        Log.i(TAG, "startVpnProxy OK, ${routes.size} active route(s)")
     }
 
     private fun buildRoutes(configs: List<ConfigEntity>): List<VpnRouteSpec> {
         val seen = mutableSetOf<Pair<String, Int>>()
         return configs.mapNotNull { cfg ->
             if (cfg.targetPackage.isBlank()) {
-                Log.e(TAG, "config '${cfg.id}' (${cfg.displayName}) sans targetPackage — ignorée")
+                Log.e(TAG, "config '${cfg.id}' (${cfg.displayName}) has no targetPackage, skipped")
                 return@mapNotNull null
             }
             val ip = cfg.syntheticIp?.trim()
             val port = cfg.syntheticPort
-            // Le core refuse TOUTE la table pour une seule route invalide ou en
-            // double : on écarte la route fautive plutôt que de perdre la VPN.
+            // The core rejects the WHOLE table for a single invalid or duplicate
+            // route: drop the faulty route rather than lose the VPN.
             if (!SyntheticEndpoints.isValidIp(ip) || port == null || port !in 1..65535) {
-                Log.e(TAG, "config '${cfg.id}' : IP/port synthétique invalide ($ip:$port) — ignorée")
+                Log.e(TAG, "config '${cfg.id}': invalid synthetic IP/port ($ip:$port), skipped")
                 return@mapNotNull null
             }
             if (!seen.add(ip!! to port)) {
-                Log.e(TAG, "config '${cfg.id}' : $ip:$port déjà routé — ignorée")
+                Log.e(TAG, "config '${cfg.id}': $ip:$port already routed, skipped")
                 return@mapNotNull null
             }
             val targetUid = runCatching {
                 packageManager.getApplicationInfo(cfg.targetPackage, 0).uid
             }.getOrNull() ?: run {
-                Log.e(TAG, "uid introuvable pour ${cfg.targetPackage} — route ignorée")
+                Log.e(TAG, "uid not found for ${cfg.targetPackage}, route skipped")
                 return@mapNotNull null
             }
             VpnRouteSpec(
@@ -265,8 +266,8 @@ class MtlsVpnService : VpnService() {
                     certChainPem = cfg.certChainPem,
                     caPem = cfg.caPem,
                     keystoreAlias = cfg.keystoreAlias,
-                    // VPN ne supporte pas le token-in-path (l'URL est déjà
-                    // synthétique 192.0.2.X et l'isolation OS-enforced suffit).
+                    // VPN does not support token-in-path (the URL is already the
+                    // synthetic 192.0.2.X and OS-enforced isolation is enough).
                     pathToken = null,
                     extraCanonicalHosts = emptyList(),
                 ),
@@ -280,10 +281,10 @@ class MtlsVpnService : VpnService() {
     }
 
     /**
-     * Ferme le fd du tun si le core ne l'a pas adopté. On compare l'identité
-     * du fichier (dev/ino/rdev) via un dup : si le core l'a déjà fermé, le
-     * numéro peut avoir été réattribué à un autre fichier qu'il ne faut
-     * surtout pas fermer (double close).
+     * Closes the tun fd if the core did not adopt it. The file identity
+     * (dev/ino/rdev) is compared through a dup: if the core already closed it,
+     * the number may have been reassigned to another file that must not be
+     * closed (double close).
      */
     private fun closeTunFdIfStillOpen(fd: Int, tunStat: StructStat) {
         val stillTun = runCatching {
@@ -295,11 +296,11 @@ class MtlsVpnService : VpnService() {
         }.getOrDefault(false)
         if (stillTun) {
             runCatching { ParcelFileDescriptor.adoptFd(fd).close() }
-                .onFailure { Log.w(TAG, "fermeture du fd tun $fd : ${it.message}") }
+                .onFailure { Log.w(TAG, "closing tun fd $fd: ${it.message}") }
         }
     }
 
-    /** Arrête le core (qui ferme le tun) et l'audit. Idempotent. */
+    /** Stops the core (which closes the tun) and the audit logger. Idempotent. */
     private fun stopTunnel() {
         val (h, a) = synchronized(this) {
             val pair = handle to auditLogger

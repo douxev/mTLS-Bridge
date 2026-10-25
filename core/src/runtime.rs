@@ -1,17 +1,17 @@
-//! Runtime tokio dédié aux proxys.
+//! Dedicated tokio runtime for the proxies.
 //!
-//! Les fonctions async exportées par uniffi (`async_runtime = "tokio"`)
-//! tournent sous async-compat, dont le runtime global est un current_thread
-//! piloté par un seul thread : tout `tokio::spawn` fait depuis ces fonctions
-//! y atterrit. Les callbacks Kotlin synchrones — signature Keystore pendant
-//! le handshake mTLS (jusqu'à ~1 s sur StrongBox), `getConnectionOwnerUid` à
-//! chaque accept — bloquaient alors toutes les connexions de tous les
-//! proxys.
+//! The async functions exported by uniffi (`async_runtime = "tokio"`) run
+//! under async-compat, whose global runtime is a current_thread runtime
+//! driven by a single thread: every `tokio::spawn` made from these functions
+//! lands there. Synchronous Kotlin callbacks (Keystore signing during the
+//! mTLS handshake, up to ~1 s on StrongBox; `getConnectionOwnerUid` on every
+//! accept) used to block every connection of every proxy.
 //!
-//! Les entrées FFI démarrent donc les proxys sur un runtime multi-thread à 2
-//! workers ([`run`]) : listeners, netstack VPN et sessions y vivent. Les
-//! appels bloquants passent par [`blocking`], qui libère le worker pendant
-//! l'appel : un handshake qui signe n'immobilise plus les autres sessions.
+//! The FFI entry points therefore start the proxies on a multi-threaded
+//! runtime with 2 workers ([`run`]): listeners, the VPN netstack and the
+//! sessions live there. Blocking calls go through [`blocking`], which frees
+//! the worker during the call: a handshake that is signing no longer stalls
+//! the other sessions.
 
 use std::future::Future;
 use std::sync::OnceLock;
@@ -20,8 +20,8 @@ use tokio::runtime::{Builder, Handle, Runtime, RuntimeFlavor};
 
 use crate::error::{CoreError, Result};
 
-/// Deux workers : du forwarding n'a pas besoin de plus, et chaque worker
-/// réveillé coûte de la batterie.
+/// Two workers: forwarding does not need more, and every worker that wakes
+/// up costs battery.
 const WORKERS: usize = 2;
 
 fn runtime() -> Result<&'static Runtime> {
@@ -35,12 +35,12 @@ fn runtime() -> Result<&'static Runtime> {
                 .build()
         })
         .as_ref()
-        .map_err(|e| CoreError::Internal(format!("runtime proxy: {e}")))
+        .map_err(|e| CoreError::Internal(format!("proxy runtime: {e}")))
 }
 
-/// Exécute `fut` sur le runtime des proxys et attend son résultat, depuis
-/// n'importe quel contexte (runtime d'async-compat compris). Les tâches que
-/// `fut` spawn, et les sockets qu'il ouvre, appartiennent à ce runtime.
+/// Runs `fut` on the proxy runtime and waits for its result, from any
+/// context (including the async-compat runtime). The tasks that `fut`
+/// spawns, and the sockets it opens, belong to this runtime.
 pub(crate) async fn run<F>(fut: F) -> Result<F::Output>
 where
     F: Future + Send + 'static,
@@ -49,14 +49,15 @@ where
     runtime()?
         .spawn(fut)
         .await
-        .map_err(|e| CoreError::Internal(format!("tâche proxy interrompue: {e}")))
+        .map_err(|e| CoreError::Internal(format!("proxy task interrupted: {e}")))
 }
 
-/// Appel synchrone potentiellement long (callback Kotlin). Sur un worker du
-/// runtime multi-thread, `block_in_place` confie les autres tâches du worker
-/// à un autre thread le temps de l'appel. Ailleurs (runtime current_thread
-/// des tests ou d'async-compat, où `block_in_place` paniquerait — et
-/// panic=abort tue l'app), l'appel est fait tel quel.
+/// Potentially long synchronous call (Kotlin callback). On a worker of the
+/// multi-threaded runtime, `block_in_place` hands the worker's other tasks
+/// over to another thread for the duration of the call. Elsewhere (the
+/// current_thread runtime of the tests or of async-compat, where
+/// `block_in_place` would panic, and panic=abort kills the app), the call is
+/// made as is.
 pub(crate) fn blocking<R>(f: impl FnOnce() -> R) -> R {
     match Handle::try_current() {
         Ok(h) if h.runtime_flavor() == RuntimeFlavor::MultiThread => tokio::task::block_in_place(f),
@@ -88,7 +89,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(name.as_deref(), Some("mtls-proxy"));
-        // Sur un worker, block_in_place est utilisé (pas de panique).
+        // On a worker, block_in_place is used (no panic).
         assert_eq!(run(async { blocking(|| 7) }).await.unwrap(), 7);
     }
 }

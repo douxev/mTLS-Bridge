@@ -13,18 +13,18 @@ import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.launch
 
 /**
- * Pont entre les événements émis par le core Rust (sync, via callback uniffi)
- * et l'écriture en DB (suspend).
+ * Bridge between the events emitted by the Rust core (sync, via a uniffi
+ * callback) and the DB write (suspend).
  *
- * Dispatch :
- * - Événements porteurs d'un `config_id` (BindOk, Accepted, BridgeFailed,
- *   VpnRouteHit…) → écrits sous ce configId.
- * - Événements globaux (VpnStarted, VpnRouteMissing, Stopped) → broadcast
- *   vers tous les `allConfigIds` connus, pour qu'ils apparaissent dans les
- *   logs de chaque config concernée par la session VPN.
+ * Dispatch:
+ * - Events carrying a `config_id` (BindOk, Accepted, BridgeFailed,
+ *   VpnRouteHit...) are written under that configId.
+ * - Global events (VpnStarted, VpnRouteMissing, Stopped) are broadcast to
+ *   every known `allConfigIds`, so they show up in the logs of each config
+ *   involved in the VPN session.
  *
- * On enqueue dans un Channel pour ne pas bloquer le thread Rust/tokio sur
- * une écriture Room potentiellement lente.
+ * Events are queued in a Channel so the Rust/tokio thread is never blocked
+ * on a potentially slow Room write.
  */
 class AuditLoggerImpl(
     private val allConfigIds: List<String>,
@@ -59,7 +59,7 @@ class AuditLoggerImpl(
         queue.close()
     }
 
-    /** Renvoie (type, details, configId-cible-ou-null-pour-broadcast). */
+    /** Returns (type, details, target configId or null for broadcast). */
     private fun serialize(event: ProxyEvent): Triple<String, String, String?> = when (event) {
         is ProxyEvent.BindOk ->
             Triple("BIND_OK", "port=${event.port}", event.configId)
@@ -75,7 +75,7 @@ class AuditLoggerImpl(
             )
         is ProxyEvent.RejectedUidUnknown ->
             Triple("REJECTED_UID_UNKNOWN", "", event.configId)
-        // Motif seul : jamais le token, le cookie ni le chemin demandé.
+        // Reason only: never the token, the cookie or the requested path.
         is ProxyEvent.RejectedToken ->
             Triple("REJECTED_TOKEN", tokenRejectionDetails(event.reason), event.configId)
         is ProxyEvent.VpnStarted ->
@@ -99,8 +99,8 @@ class AuditLoggerImpl(
     }
 
     private fun tokenRejectionDetails(reason: TokenRejection): String = when (reason) {
-        TokenRejection.INVALID_TOKEN -> "token ou cookie de session absent ou invalide"
-        TokenRejection.NOT_HTTP -> "flux non HTTP"
-        TokenRejection.HEADERS_TOO_LARGE -> "headers trop gros"
+        TokenRejection.INVALID_TOKEN -> "missing or invalid token or session cookie"
+        TokenRejection.NOT_HTTP -> "non-HTTP stream"
+        TokenRejection.HEADERS_TOO_LARGE -> "headers too large"
     }
 }

@@ -75,11 +75,11 @@ lookup, and FOREGROUND_SERVICE to maintain the proxies in background.
 
 ### Open documentation and tooling
 
-While the app itself is proprietary, the **deployment-bundle format is
-documented and open** so IT admins can generate bundles from a simple
-bash + openssl script, without ever installing the app on their build
-server. See the public documentation repository for the format spec
-and a reference script.
+The app is open source (MPL-2.0), and the **deployment-bundle format is
+documented** so IT admins can generate bundles from a simple bash +
+openssl script, without ever installing the app on their build server.
+The format spec and a reference script live in the `deployment-tools/`
+folder of https://github.com/douxev/mTLS-Bridge.
 
 ## Categories
 

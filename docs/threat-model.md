@@ -1,182 +1,182 @@
-# Modèle de menaces — mTLS Bridge
+# Threat model — mTLS Bridge
 
-Cette page décrit le modèle de menaces de mTLS Bridge, les hypothèses sous-jacentes,
-les défenses en place et les compromis assumés. Reflète l'état du code à la date
-du dernier commit.
+This page describes the threat model of mTLS Bridge, the underlying
+assumptions, the defenses in place and the accepted trade-offs. It reflects
+the state of the code as of the latest commit.
 
-## 1. Buts et non-buts
+## 1. Goals and non-goals
 
-**Buts.** Permettre à une utilisatrice d'utiliser une app cliente Android
-existante (Jellyfin, Nextcloud, Home Assistant…) avec un backend self-hosted
-exigeant une authentification mTLS, **sans modifier** l'app cliente, et sans
-exposer la clé privée client à un attaquant qui aurait obtenu un accès
-applicatif au device.
+**Goals.** Let a user run an existing Android client app (Jellyfin,
+Nextcloud, Home Assistant…) against a self-hosted backend that requires mTLS
+authentication, **without modifying** the client app, and without exposing
+the client private key to an attacker who has obtained app-level access to
+the device.
 
-**Non-buts.**
-- Authentifier ou attester *le wrapper lui-même* auprès du backend.
-- Empêcher un attaquant qui contrôle root sur le device de signer des
-  requêtes (un root peut toujours demander au Keystore de signer
-  arbitrairement même sans extraire la clé).
-- Wrapper des apps qui font du HTTPS strict vers leur hostname réel (le
-  wrapper ne fait pas de MITM ; voir §6).
+**Non-goals.**
+- Authenticating or attesting *the wrapper itself* to the backend.
+- Preventing an attacker with root on the device from signing requests (root
+  can always ask the Keystore to sign arbitrary data, even without extracting
+  the key).
+- Wrapping apps that do strict HTTPS to their real hostname (the wrapper does
+  not do MITM; see §6).
 
-## 2. Périmètre des actifs
+## 2. Asset inventory
 
-| Actif | Sensibilité |
+| Asset | Sensitivity |
 |---|---|
-| Clé privée client mTLS (importée d'un .p12) | **Critique** — donne l'identité TLS de l'utilisatrice |
-| Chaîne de certs client + CA upstream pinné | Faible (cert public) |
-| Passphrase du .p12 (saisie UI) | Élevée *temporairement* — utilisée à l'import puis effacée |
-| Configurations stockées (nom, hôte, port, mode) | Faible (informations de routage) |
-| Logs d'audit chiffrés | Modérée (révèle l'usage) |
-| Tunnel de bytes (HTTP plaintext loopback ↔ HTTPS+mTLS upstream) | Élevée (passe des requêtes authentifiées) |
+| mTLS client private key (imported from a .p12) | **Critical** — carries the user's TLS identity |
+| Client certificate chain + pinned upstream CA | Low (public certificates) |
+| .p12 passphrase (entered in the UI) | High *temporarily* — used during import, then wiped |
+| Stored configurations (name, host, port, mode) | Low (routing information) |
+| Encrypted audit logs | Moderate (reveals usage) |
+| Byte tunnel (plaintext HTTP on loopback ↔ HTTPS+mTLS upstream) | High (carries authenticated requests) |
 
-## 3. Acteurs et capacités
+## 3. Actors and capabilities
 
-| Acteur | Modèle de capacités |
+| Actor | Capability model |
 |---|---|
-| **App cliente officielle** (Jellyfin Android, etc.) | Code closed-source. Considérée comme honnête mais potentiellement bavarde. Peut faire toutes les requêtes HTTP qu'elle veut au backend une fois la session établie. |
-| **Autre app malveillante installée sur le device** | UID Linux distinct. Peut tenter de se connecter à 127.0.0.1, scanner les ports, abuser des APIs publiques. Ne dispose ni de root ni de l'accès Keystore de mTLS Bridge. |
-| **Backend self-hosted compromis** | Hors périmètre côté wrapper. La doxev a la main sur son backend ; en cas de compromission, le mTLS ne sauve rien. |
-| **Attaquant réseau (WiFi public, MITM)** | Peut voir et modifier les paquets entre le device et le backend. Bloqué par TLS + pinning CA + mTLS. |
-| **OS Android compromis (root, malware système)** | Hors périmètre. Un root peut signer arbitrairement même sans extraire la clé. |
-| **Le wrapper mTLS Bridge lui-même** | Limité par les défenses matérielles : la clé reste non-exportable dans le TEE, signature toujours via Keystore. Voir §5. |
+| **Official client app** (Jellyfin Android, etc.) | Closed-source code. Considered honest but potentially chatty. Can send any HTTP request it wants to the backend once the session is established. |
+| **Other, malicious app installed on the device** | Distinct Linux UID. Can try to connect to 127.0.0.1, scan ports, abuse public APIs. Has neither root nor access to mTLS Bridge's Keystore entries. |
+| **Compromised self-hosted backend** | Out of scope for the wrapper. The user controls their own backend; if it is compromised, mTLS saves nothing. |
+| **Network attacker (public Wi-Fi, MITM)** | Can observe and modify packets between the device and the backend. Blocked by TLS + CA pinning + mTLS. |
+| **Compromised Android OS (root, system malware)** | Out of scope. Root can sign arbitrary data even without extracting the key. |
+| **The mTLS Bridge wrapper itself** | Bounded by the hardware defenses: the key stays non-exportable in the TEE, and signing always goes through the Keystore. See §5. |
 
-## 4. Surfaces et défenses par mode
+## 4. Attack surface and defenses per mode
 
-### Mode loopback (recommandé par défaut)
+### Loopback mode (recommended default)
 
 ```
-App cliente —http→ 127.0.0.1:N —Rust mTLS+TLS→ backend
+Client app —http→ 127.0.0.1:N —Rust mTLS+TLS→ backend
 ```
 
-- **Always-on par config** : le `LoopbackProxyService` héberge un proxy par
-  config `enabled`, démarré automatiquement par le `LoopbackCoordinator`.
-  Pas de bind quand `enabled=false`.
-- **UID check fail-closed à chaque accept** : on appelle
+- **Always-on per config**: `LoopbackProxyService` hosts one proxy per
+  `enabled` config, started automatically by `LoopbackCoordinator`. Nothing
+  is bound when `enabled=false`.
+- **Fail-closed UID check on every accept**: we call
   `ConnectivityManager.getConnectionOwnerUid(IPPROTO_TCP, peer_local, peer_remote)`
-  pour résoudre l'UID du pair. Si UID ≠ celui de l'app enregistrée (ou
-  résolution = `INVALID_UID`), on droppe la connexion et on logue
-  `RejectedUidMismatch` / `RejectedUidUnknown`.
-- **Port unique par config** : chaque proxy a son port éphémère ou fixe.
-  Les services sont isolés au niveau process (services Android distincts
-  cohabitant dans le même `LoopbackProxyService`).
-- **Cohabite avec d'autres VPN** (WireGuard, Mullvad…) : on n'occupe pas
-  le slot VPN unique du device.
-- **Conso au repos** : ≈ 0 — `TcpListener` dort sur `epoll`, aucun parsing
-  réseau tant qu'aucune connexion n'arrive.
+  to resolve the peer's UID. If the UID differs from the registered app's
+  (or the lookup returns `INVALID_UID`), the connection is dropped and
+  `RejectedUidMismatch` / `RejectedUidUnknown` is logged.
+- **One port per config**: each proxy has its own ephemeral or fixed port.
+  The services are isolated at the process level (distinct Android services
+  living in the same `LoopbackProxyService`).
+- **Coexists with other VPNs** (WireGuard, Mullvad…): it does not take the
+  device's single VPN slot.
+- **Idle cost**: ≈ 0 — the `TcpListener` sleeps on `epoll`, no network
+  parsing happens until a connection arrives.
 
-### Mode VPN (cas marginal)
+### VPN mode (edge case)
 
 ```
-App cliente —http→ tun virtuel (192.0.2.0/24) —smoltcp→ Rust mTLS+TLS —→ backend
+Client app —http→ virtual tun (192.0.2.0/24) —smoltcp→ Rust mTLS+TLS —→ backend
 ```
 
-- **Isolation OS-enforced via `addAllowedApplication(pkg)`** : le noyau
-  Android filtre les paquets — seules les apps listées peuvent envoyer
-  dans le tun. Aucune autre app du device ne peut atteindre le proxy.
-- **UID check soft-fail** : pour deux apps allow-listées dans le même tun,
-  on tente de vérifier que la connexion à l'IP synthétique d'une config
-  vient bien de l'UID attendu (cross-cert leak). L'API
-  `getConnectionOwnerUid` ne supporte pas les sockets VPN-routés sur la
-  plupart des kernels Android (retourne `INVALID_UID`), donc on accepte
-  par défaut quand la résolution échoue ; on ne refuse qu'un mismatch
-  explicite. **Conséquence** : si deux apps sont actives simultanément
-  dans la même VPN, l'une peut potentiellement utiliser le cert de l'autre
-  en visant son IP synthétique. Mitigation : n'autoriser que des apps
-  qu'on considère honnêtes (= même règle que toute VPN per-app sur Android).
-- **Une seule VPN à la fois** : limitation Android.
-- **Effet de bord** : tout le trafic des apps allow-listées passe par notre
-  tun. Les requêtes vers d'autres serveurs (CDN d'images, analytics)
-  arrivent dans le tun, ne matchent aucune route synthétique → on les
-  drop. Casse les fonctionnalités collatérales de l'app cible.
-- **Conso** : continue — smoltcp parse chaque paquet, runner tokio en
-  boucle tant que la VPN tourne.
+- **OS-enforced isolation through `addAllowedApplication(pkg)`**: the
+  Android kernel filters packets — only the listed apps can send into the
+  tun. No other app on the device can reach the proxy.
+- **Soft-fail UID check**: for two allow-listed apps in the same tun, we try
+  to verify that a connection to a config's synthetic IP comes from the
+  expected UID (cross-certificate leak). The `getConnectionOwnerUid` API does
+  not support VPN-routed sockets on most Android kernels (it returns
+  `INVALID_UID`), so we accept by default when the lookup fails and only
+  reject an explicit mismatch. **Consequence**: if two apps are active at the
+  same time in the same VPN, one can potentially use the other's certificate
+  by targeting its synthetic IP. Mitigation: only allow apps you consider
+  honest (the same rule as for any per-app VPN on Android).
+- **Only one VPN at a time**: Android limitation.
+- **Side effect**: all traffic of the allow-listed apps goes through our
+  tun. Requests to other servers (image CDNs, analytics) enter the tun,
+  match no synthetic route and are dropped. This breaks the target app's
+  ancillary features.
+- **Cost**: continuous — smoltcp parses every packet and the tokio runner
+  loops as long as the VPN is running.
 
-### Recommandation
+### Recommendation
 
-Le **mode loopback** est strictement meilleur sur l'isolation, la batterie,
-la compatibilité avec d'autres VPN, et n'a aucun désavantage fonctionnel
-tant que l'app cible accepte une URL en `http://127.0.0.1:PORT`. C'est le
-cas de Jellyfin et Nextcloud officiels. Le mode VPN n'est utile que pour
-une app qui refuserait explicitement une URL en localhost — cas rare en
-pratique.
+**Loopback mode** is strictly better for isolation, battery and
+compatibility with other VPNs, and has no functional drawback as long as the
+target app accepts an `http://127.0.0.1:PORT` URL. This is the case for the
+official Jellyfin and Nextcloud apps. VPN mode is only useful for an app that
+explicitly refuses a localhost URL — a rare case in practice.
 
-## 5. Garanties matérielles de la clé
+## 5. Hardware guarantees for the key
 
-La clé .p12 est importée dans Android Keystore via `setKeyEntry`. Sur les
-devices modernes supportant l'import-into-TEE, la clé est ensuite
-hardware-backed et **non-exportable**.
+The .p12 key is imported into the Android Keystore through `setKeyEntry`. On
+modern devices that support import into the TEE, the key is then
+hardware-backed and **non-exportable**.
 
-`KeyInfo.getSecurityLevel()` renvoie l'un des niveaux suivants, **affiché
-honnêtement à l'utilisatrice dans l'UI** :
+`KeyInfo.getSecurityLevel()` returns one of the following levels, **shown
+truthfully to the user in the UI**:
 
-- `STRONGBOX` : élément sécurisé dédié (Pixel 3+, certains Samsung).
-- `TRUSTED_ENVIRONMENT` : TEE (ARM TrustZone) — la quasi-totalité des
-  devices Android 9+.
-- `SOFTWARE` : pas de TEE disponible ou OEM non conforme — la clé est
-  protégée logiquement seulement.
+- `STRONGBOX`: dedicated secure element (Pixel 3+, some Samsung devices).
+- `TRUSTED_ENVIRONMENT`: TEE (ARM TrustZone) — nearly all Android 9+
+  devices.
+- `SOFTWARE`: no TEE available or non-compliant OEM — the key is only
+  protected in software.
 
-**Limite assumée du choix .p12** : la clé a existé en clair sur disque
-(côté backend ou device de l'utilisatrice) avant l'import. L'attestation
-Google chain n'apporte donc pas la garantie "cette clé est née dans le
-TEE et n'a jamais existé ailleurs" qu'on aurait avec un flux génération+CSR.
-Compromis explicite : on ne supporte que l'import .p12 parce que c'est le
-workflow standard d'intégration mTLS.
+**Accepted limitation of the .p12 choice**: the key existed in clear on disk
+(on the backend side or on the user's device) before the import. Google's
+attestation chain therefore cannot provide the "this key was born in the TEE
+and never existed anywhere else" guarantee that a generate-plus-CSR flow
+would. Explicit trade-off: only .p12 import is supported because it is the
+standard mTLS onboarding workflow.
 
-## 6. Limites connues
+## 6. Known limitations
 
-- **HTTPS strict côté app cible** : si l'app refuse de parler en clair
-  (network-security-config strict), elle ne pourra pas utiliser le wrapper.
-  Jellyfin et Nextcloud officiels acceptent `http://` pour leur configuration
-  de serveur, c'est le cas commun.
-- **Cross-cert leak en mode VPN multi-apps** : voir §4.
-- **Pas de protection contre l'app cible malveillante** : si l'app cliente
-  officielle décide de faire des requêtes nuisibles au backend, le wrapper
-  ne peut pas les détecter (il pipe les bytes après réécriture du Host
-  header). Mitigation : configurer côté backend des permissions minimales
-  pour l'utilisateur lié au cert client. Optionnellement, filtres
-  applicatifs côté wrapper (méthodes/chemins whitelistés) — non implémenté.
-- **Réécriture HTTP/1.1 par-requête** : on réécrit le `Host:` header de
-  chaque requête keepalive (Caddy/Nginx routent par Host). Si une requête
-  utilise `Transfer-Encoding: chunked` côté body (rare en requête client),
-  on bascule en raw-copy pour le reste de la session → les requêtes
-  suivantes ne sont plus réécrites. À traiter quand un cas réel apparaîtra.
+- **Strict HTTPS in the target app**: if the app refuses to talk in
+  plaintext (strict network-security-config), it cannot use the wrapper.
+  The official Jellyfin and Nextcloud apps accept `http://` for their server
+  configuration, which is the common case.
+- **Cross-certificate leak in multi-app VPN mode**: see §4.
+- **No protection against a malicious target app**: if the official client
+  app decides to send harmful requests to the backend, the wrapper cannot
+  detect them (it pipes bytes after rewriting the Host header). Mitigation:
+  configure minimal permissions on the backend for the user tied to the
+  client certificate. Optionally, application-level filters in the wrapper
+  (allow-listed methods/paths) — not implemented.
+- **Per-request HTTP/1.1 rewriting**: the `Host:` header of every keep-alive
+  request is rewritten (Caddy/Nginx route by Host). If a request uses
+  `Transfer-Encoding: chunked` for its body (rare for client requests), the
+  proxy falls back to raw copy for the rest of the session, so subsequent
+  requests are no longer rewritten. To be addressed when a real case shows
+  up.
 
-## 7. Stratégies de défense en profondeur additionnelles
+## 7. Additional defense-in-depth strategies
 
-À ajouter selon priorité :
+To be added by priority:
 
-1. **Filtres de requêtes opt-in** côté wrapper : whitelist méthodes HTTP +
-   préfixes de chemin par config.
-2. **Audit consultable + alertes** : déjà persisté en DB chiffrée, à
-   exposer via notifications quand un événement `RejectedUidMismatch`
-   arrive.
-3. **Biometric gating** : exiger l'authentification utilisateur avant que
-   Keystore signe (`setUserAuthenticationRequired(true)`). Compromis :
-   ajoute une friction à chaque session.
-4. **Reproducible builds** + signatures vérifiables côté wrapper.
+1. **Opt-in request filters** in the wrapper: allow-list of HTTP methods +
+   path prefixes per config.
+2. **Browsable audit + alerts**: already persisted in the encrypted DB; to
+   be surfaced through notifications when a `RejectedUidMismatch` event
+   occurs.
+3. **Biometric gating**: require user authentication before the Keystore
+   signs (`setUserAuthenticationRequired(true)`). Trade-off: adds friction
+   to every session.
+4. **Reproducible builds** + verifiable signatures for the wrapper.
 
-## 8. Stockage local
+## 8. Local storage
 
-- **Configs** : SQLCipher (AES-256-GCM), passphrase 32B aléatoire stockée
-  dans EncryptedSharedPreferences (master key AES Keystore non-exportable).
-- **Logs d'audit** : même DB. Purge automatique au démarrage de l'app via
-  le `LoopbackCoordinator` (horizon glissant 7 jours par défaut).
-- **Backup Android** : désactivé via `android:allowBackup="false"` +
-  `data_extraction_rules.xml` (exclut root/database/sharedpref).
+- **Configs**: SQLCipher (AES-256-GCM), random 32-byte passphrase stored in
+  EncryptedSharedPreferences (non-exportable AES Keystore master key).
+- **Audit logs**: same DB. Automatic purge at app startup through
+  `LoopbackCoordinator` (7-day rolling window by default).
+- **Android backup**: disabled through `android:allowBackup="false"` +
+  `data_extraction_rules.xml` (excludes root/database/sharedpref).
 
-## 9. Export / import de configs
+## 9. Config export / import
 
-Pour migrer entre devices, l'app expose un export JSON contenant :
-métadonnées (nom, app cible, hôte/port, SNI, mode, IP synth/port loopback),
-**chaîne de certs client (PEM)**, **CA upstream pinné (PEM)**.
+To migrate between devices, the app provides a JSON export containing:
+metadata (name, target app, host/port, SNI, mode, synthetic IP/loopback
+port), the **client certificate chain (PEM)** and the **pinned upstream CA
+(PEM)**.
 
-**La clé privée n'est PAS exportée** — c'est volontaire (elle est non-
-exportable du Keystore matériel). À l'import sur le device cible, chaque
-config est marquée "clé manquante" et la doxev doit re-fournir son .p12
-via le bouton "Importer la clé" sur le détail de la config.
+**The private key is NOT exported** — this is deliberate (it is
+non-exportable from the hardware Keystore). On import on the target device,
+each config is flagged "key missing" and the user has to provide their .p12
+again through the key import button on the config's detail screen.
 
-Le fichier d'export n'est pas chiffré par mTLS Bridge : il contient des certs
-(publics) mais pas de secrets. Si la doxev veut le partager (cloud,
-mail…), c'est sa responsabilité d'utiliser un canal sûr.
+The export file is not encrypted by mTLS Bridge: it contains (public)
+certificates but no secrets. If the user wants to share it (cloud,
+email…), it is their responsibility to use a secure channel.

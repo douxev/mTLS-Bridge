@@ -8,54 +8,54 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Format d'export portable des configs : **archive zip** contenant
+ * Portable export format for configs: a **zip archive** containing
  *
  * ```
- * configs.json                        # métadonnées + références vers fichiers
- * README.txt                          # explication du format
- * <configId>-cert.pem                 # chaîne de certs client (PEM)
- * <configId>-ca.pem                   # CA upstream pinné (PEM)
- * <configId>.p12                      # [optionnel] clé + cert chiffré PKCS#12
+ * configs.json                        # metadata + references to files
+ * README.txt                          # format description
+ * <configId>-cert.pem                 # client certificate chain (PEM)
+ * <configId>-ca.pem                   # pinned upstream CA (PEM)
+ * <configId>.p12                      # [optional] key + cert, encrypted PKCS#12
  * ```
  *
- * Deux cas d'usage couverts par le **même format** :
+ * Two use cases are covered by the **same format**:
  *
- * **(A) Personal backup** : export depuis l'app pour migrer entre devices.
- * Le .p12 **n'est PAS inclus** (la clé privée est non-exportable du Keystore
- * matériel). Chaque config est marquée `needsKeystoreRefresh=true` à
- * l'import → la doxev re-fournit son .p12 d'origine via "Importer la clé".
+ * **(A) Personal backup**: export from the app to migrate between devices.
+ * The .p12 is **NOT included** (the private key cannot be exported from the
+ * hardware Keystore). Each config is flagged `needsKeystoreRefresh=true` on
+ * import, and the user provides their original .p12 again via "Import key".
  *
- * **(B) Deployment bundle** : un IT admin génère le bundle depuis l'extérieur
- * de l'app (script bash + openssl + zip). Il inclut le .p12 chiffré par
- * passphrase. L'employé clique sur le bundle, saisit la passphrase une fois,
- * toutes les configs sont immédiatement opérationnelles. Voir
- * `docs/deployment-bundle.md` pour le script de génération type.
+ * **(B) Deployment bundle**: an IT admin builds the bundle outside the app
+ * (bash script + openssl + zip). It includes the passphrase-encrypted .p12.
+ * The employee opens the bundle, enters the passphrase once, and every config
+ * is immediately operational. See `docs/deployment-bundle.md` for a sample
+ * generation script.
  *
- * Format documenté dans docs/threat-model.md §9.
+ * Format documented in docs/threat-model.md section 9.
  */
 object ConfigBackup {
 
-    const val SCHEMA_VERSION = 2 // v2 = zip ; v1 était le JSON inline (abandonné)
+    const val SCHEMA_VERSION = 2 // v2 = zip; v1 was inline JSON (dropped)
     private const val CONFIGS_JSON = "configs.json"
     private const val README = "README.txt"
 
     private val README_BODY = """
-        mTLS Bridge bundle — schéma v$SCHEMA_VERSION
+        mTLS Bridge bundle - schema v$SCHEMA_VERSION
 
-        Ce zip contient :
-        - configs.json   : métadonnées des configurations
-        - <id>-cert.pem  : chaîne de certs client pour la config <id>
-        - <id>-ca.pem    : CA upstream pinnée pour la config <id>
-        - <id>.p12       : [optionnel] PKCS#12 chiffré contenant la clé privée
+        This zip contains:
+        - configs.json   : configuration metadata
+        - <id>-cert.pem  : client certificate chain for config <id>
+        - <id>-ca.pem    : pinned upstream CA for config <id>
+        - <id>.p12       : [optional] encrypted PKCS#12 holding the private key
 
-        Sans .p12 (export depuis l'app) : import en mode "backup", la doxev
-        re-fournit son .p12 d'origine manuellement.
+        Without .p12 (export from the app): imported in "backup" mode, the user
+        provides their original .p12 again manually.
 
-        Avec .p12 (bundle de déploiement IT) : import direct, demande la
-        passphrase une fois pour tout le bundle.
+        With .p12 (IT deployment bundle): direct import, the passphrase is
+        asked once for the whole bundle.
 
-        Inspection : openssl x509 -in <id>-cert.pem -text
-                     openssl pkcs12 -in <id>.p12 -info
+        Inspection: openssl x509 -in <id>-cert.pem -text
+                    openssl pkcs12 -in <id>.p12 -info
     """.trimIndent()
 
     fun export(configs: List<ConfigEntity>): ByteArray {
@@ -95,8 +95,8 @@ object ConfigBackup {
         put("upstreamHost", c.upstreamHost)
         put("upstreamPort", c.upstreamPort)
         put("sni", c.sni)
-        // Informatif seulement (lu par les anciennes versions) : l'import
-        // génère toujours un alias Keystore local neuf.
+        // Informational only (read by older versions): import always
+        // generates a fresh local Keystore alias.
         put("keystoreAlias", c.keystoreAlias)
         put("mode", c.mode.name)
         put("syntheticIp", c.syntheticIp)
@@ -105,17 +105,17 @@ object ConfigBackup {
         put("enabled", c.enabled)
         put("certPemFile", "${c.id}-cert.pem")
         put("caPemFile", "${c.id}-ca.pem")
-        // pathToken optionnel : présent si la config a un token loopback.
+        // Optional pathToken: present if the config has a loopback token.
         put("pathToken", c.pathToken ?: JSONObject.NULL)
         put("extraCanonicalHosts", JSONArray(CanonicalHosts.parse(c.extraCanonicalHosts)))
-        // p12File optionnel : non émis par l'export app (on n'a pas la clé).
-        // Présent uniquement dans les bundles de déploiement IT.
+        // Optional p12File: never emitted by the app export (the key is not
+        // available). Present only in IT deployment bundles.
     }
 
     /**
-     * Une config parsée depuis un bundle. `p12Bytes != null` ⇒ deployment
-     * bundle, on importera le .p12 dans Keystore avec la passphrase fournie.
-     * Sinon ⇒ personal backup, needsKeystoreRefresh=true.
+     * A config parsed from a bundle. `p12Bytes != null` means a deployment
+     * bundle: the .p12 will be imported into the Keystore with the supplied
+     * passphrase. Otherwise it is a personal backup, needsKeystoreRefresh=true.
      */
     data class ParsedConfig(
         val entity: ConfigEntity,
@@ -123,8 +123,8 @@ object ConfigBackup {
     )
 
     fun parse(zipBytes: ByteArray): List<ParsedConfig> {
-        // Première passe : on lit le zip dans une map nom → bytes pour éviter
-        // les hypothèses sur l'ordre des entries.
+        // First pass: read the zip into a name -> bytes map to avoid any
+        // assumption about entry order.
         val files = mutableMapOf<String, ByteArray>()
         ZipInputStream(zipBytes.inputStream()).use { zip ->
             while (true) {
@@ -136,11 +136,11 @@ object ConfigBackup {
             }
         }
         val configsJson = files[CONFIGS_JSON]
-            ?: error("zip invalide : pas de $CONFIGS_JSON")
+            ?: error("invalid zip: no $CONFIGS_JSON")
         val root = JSONObject(String(configsJson, Charsets.UTF_8))
         val schema = root.getInt("schema")
         require(schema == SCHEMA_VERSION) {
-            "schéma de bundle $schema non supporté (attendu $SCHEMA_VERSION)"
+            "unsupported bundle schema $schema (expected $SCHEMA_VERSION)"
         }
         val arr = root.getJSONArray("configs")
         return (0 until arr.length()).map { i ->
@@ -152,13 +152,13 @@ object ConfigBackup {
         val certPemFile = o.getString("certPemFile")
         val caPemFile = o.getString("caPemFile")
         val certChainPem = files[certPemFile]
-            ?: error("zip incomplet : $certPemFile manquant")
+            ?: error("incomplete zip: $certPemFile missing")
         val caPem = files[caPemFile]
-            ?: error("zip incomplet : $caPemFile manquant")
-        // Champ optionnel pour les bundles de déploiement IT.
+            ?: error("incomplete zip: $caPemFile missing")
+        // Optional field for IT deployment bundles.
         val p12Bytes: ByteArray? = if (o.has("p12File") && !o.isNull("p12File")) {
             val p12File = o.getString("p12File")
-            files[p12File] ?: error("zip incomplet : $p12File manquant")
+            files[p12File] ?: error("incomplete zip: $p12File missing")
         } else null
         val entity = ConfigEntity(
             id = o.getString("id"),
@@ -169,8 +169,8 @@ object ConfigBackup {
             sni = o.optString("sni").takeIf { it.isNotEmpty() && it != "null" },
             caPem = caPem,
             certChainPem = certChainPem,
-            // Alias du bundle ignoré : ConfigRepository.importZip en génère un
-            // neuf (un bundle ne doit jamais pouvoir viser une clé existante).
+            // The bundle's alias is ignored: ConfigRepository.importZip generates
+            // a fresh one (a bundle must never be able to target an existing key).
             keystoreAlias = "",
             mode = ProxyMode.valueOf(o.getString("mode")),
             syntheticIp = if (o.isNull("syntheticIp")) null else o.getString("syntheticIp"),
@@ -178,8 +178,8 @@ object ConfigBackup {
             loopbackPort = if (o.isNull("loopbackPort")) null else o.getInt("loopbackPort"),
             securityLevel = KeySecurityLevel.UNKNOWN,
             createdAtEpochMs = System.currentTimeMillis(),
-            // Avec .p12 : on active dès l'import après import Keystore réussi.
-            // Sans .p12 : needsKeystoreRefresh=true, désactivée.
+            // With .p12: enabled right away once the Keystore import succeeds.
+            // Without .p12: needsKeystoreRefresh=true, disabled.
             enabled = p12Bytes != null,
             needsKeystoreRefresh = p12Bytes == null,
             pathToken = if (o.has("pathToken") && !o.isNull("pathToken"))
@@ -190,7 +190,7 @@ object ConfigBackup {
         return ParsedConfig(entity, p12Bytes)
     }
 
-    /** Champ optionnel : tableau JSON (format d'export) ou chaîne séparée par des virgules. */
+    /** Optional field: JSON array (export format) or comma-separated string. */
     private fun parseExtraCanonicalHosts(o: JSONObject): String? {
         if (!o.has("extraCanonicalHosts") || o.isNull("extraCanonicalHosts")) return null
         val arr = o.optJSONArray("extraCanonicalHosts")

@@ -1,6 +1,6 @@
 # mTLS Bridge bundle format — schema v2
 
-A mTLS Bridge deployment bundle is a standard `.zip` archive. The mTLS Bridge
+An mTLS Bridge deployment bundle is a standard `.zip` archive. The mTLS Bridge
 Android app reads it through the system Storage Access Framework.
 
 ## Top-level layout
@@ -91,7 +91,7 @@ The comments below are documentation only.
 | `loopbackPort`  | int?    | no       | LOOPBACK only; fixed port. Absent, `0`, out of range or already used on the device = drawn by the app on import — see below |
 | `syntheticIp`   | string? | no       | VPN only; an IP from `192.0.2.0/24` (TEST-NET) is recommended |
 | `syntheticPort` | int?    | no       | VPN only |
-| `enabled`       | bool    | yes      | LOOPBACK : auto-start after import; ignored for VPN |
+| `enabled`       | bool    | yes      | LOOPBACK: auto-start after import; ignored for VPN |
 | `certPemFile`   | string  | yes      | zip-relative file name of the client cert chain |
 | `caPemFile`     | string  | yes      | zip-relative file name of the pinned upstream CA |
 | `p12File`       | string? | no       | zip-relative file name of the PKCS#12 — see below |
@@ -114,7 +114,7 @@ user pastes into the target app, so it should not change:
 
 ### `pathToken` semantics (loopback isolation)
 
-When set, the proxy will :
+When set, the proxy will:
 
 - Accept only HTTP requests whose path starts with `/<pathToken>/` (or
   equals `/<pathToken>`), or that carry the proxy's session cookie (below).
@@ -153,8 +153,8 @@ Omit `pathToken` to disable the check (URL stays plain
   under its `keystoreAlias`. The config becomes operational right after.
 
 - **Absent** → "personal backup" bundle. On import, the config is created
-  in a "needs key refresh" state ; the user must provide the matching
-  `.p12` separately through the app's UI ("Importer la clé" on each
+  in a "needs key refresh" state; the user must provide the matching
+  `.p12` separately through the app's UI (the key import action on each
   config's detail screen).
 
 ### Cert chain validation
@@ -178,5 +178,5 @@ The app reads `configs.json` and `README.txt` from the zip. All other
 file names should match what `configs.json` references — extra files are
 ignored.
 
-Future schema versions may use additional reserved names ; treat the
+Future schema versions may use additional reserved names; treat the
 zip as opaque beyond what's documented here.

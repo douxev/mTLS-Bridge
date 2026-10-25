@@ -20,23 +20,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
 
-/** Android TV / Google TV (mode TV ou feature leanback). */
+/** Android TV / Google TV (TV UI mode or leanback feature). */
 fun Context.isTelevision(): Boolean {
     val uiMode = getSystemService(UiModeManager::class.java)?.currentModeType
     return uiMode == Configuration.UI_MODE_TYPE_TELEVISION ||
         packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
 }
 
-/** Fourni une fois par [com.douxev.mtls_bridge.MainActivity]. */
+/** Provided once by [com.douxev.mtls_bridge.MainActivity]. */
 val LocalIsTv = staticCompositionLocalOf { false }
 
-/** Marges de sécurité recommandées pour les téléviseurs (zone d'overscan). */
+/** Recommended safe-area margins for televisions (overscan area). */
 val TvSafeArea = PaddingValues(horizontal = 48.dp, vertical = 27.dp)
 
 /**
- * Contour bien visible à 3 m quand l'élément (ou l'un de ses enfants) a le
- * focus D-pad. L'état « focused » natif de Material3 (voile à ~10 %) se voit
- * mal sur une TV. No-op hors TV.
+ * Outline clearly visible from 3 m away when the element (or one of its
+ * children) has D-pad focus. Material3's native "focused" state (a ~10 %
+ * overlay) is hard to see on a TV. No-op outside TV.
  */
 @Composable
 fun Modifier.tvFocusHighlight(shape: Shape = CardDefaults.shape): Modifier {

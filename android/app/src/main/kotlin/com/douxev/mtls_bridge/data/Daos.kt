@@ -46,8 +46,8 @@ interface AuditDao {
     suspend fun insert(event: AuditEventEntity)
 
     /**
-     * Purge proactive : on garde un horizon glissant pour éviter de gonfler la DB.
-     * Appelé périodiquement par le service de premier plan.
+     * Proactive purge: keeps a sliding window to avoid bloating the DB.
+     * Called periodically by the foreground service.
      */
     @Query("DELETE FROM audit_events WHERE timestampMs < :olderThanMs")
     suspend fun purgeOlderThan(olderThanMs: Long)

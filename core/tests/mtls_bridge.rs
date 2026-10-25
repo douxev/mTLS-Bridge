@@ -1,15 +1,15 @@
-//! Test d'intégration end-to-end :
+//! End-to-end integration test:
 //!
-//! 1. On génère une PKI complète en mémoire avec rcgen : CA, cert serveur
-//!    (SAN=localhost), cert client.
-//! 2. On lance un faux serveur HTTPS qui exige l'auth client (mTLS) sur un
-//!    port aléatoire — quand il reçoit "GET /ping", il répond "pong".
-//! 3. On précompile une `ProxyConfig` avec la clé/cert client en RAM.
-//! 4. On ouvre une socket TCP vers le serveur via notre `bridge_to_mtls_upstream`
-//!    et on écrit "GET /ping". On attend "pong" en retour.
+//! 1. A full in-memory PKI is generated with rcgen: CA, server cert
+//!    (SAN=localhost), client cert.
+//! 2. A fake HTTPS server that requires client auth (mTLS) is started on a
+//!    random port: when it receives "GET /ping", it answers "pong".
+//! 3. A `ProxyConfig` is precompiled with the client key/cert in RAM.
+//! 4. A TCP socket to the server is opened through `bridge_to_mtls_upstream`
+//!    and "GET /ping" is written. "pong" is expected in return.
 //!
-//! Si tout passe, on a prouvé que la chaîne complète (parsing PEM →
-//! ClientConfig rustls → handshake mTLS → tunnel bidirectionnel) marche.
+//! If everything passes, the full chain (PEM parsing -> rustls ClientConfig
+//! -> mTLS handshake -> bidirectional tunnel) is proven to work.
 
 use std::sync::Arc;
 
@@ -44,7 +44,7 @@ fn build_pki() -> Pki {
     let ca_key = KeyPair::generate().unwrap();
     let ca_cert = ca_params.self_signed(&ca_key).unwrap();
 
-    // ---------- Serveur (SAN = localhost) ----------
+    // ---------- Server (SAN = localhost) ----------
     let mut srv_params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
     srv_params.key_usages = vec![
         KeyUsagePurpose::DigitalSignature,
@@ -86,7 +86,7 @@ fn parse_pkcs8(pem: &[u8]) -> PrivateKeyDer<'static> {
     let mut cur = Cursor::new(pem);
     let der = rustls_pemfile::pkcs8_private_keys(&mut cur)
         .next()
-        .expect("au moins une clé pkcs8")
+        .expect("at least one pkcs8 key")
         .unwrap();
     PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(der.secret_pkcs8_der().to_vec()))
 }
@@ -128,7 +128,7 @@ async fn spawn_mtls_echo_server(pki: &Pki) -> u16 {
                     Ok(n) => n,
                     Err(_) => return,
                 };
-                // Réponse HTTP minimaliste indépendante du chemin demandé.
+                // Minimal HTTP response; the body depends only on whether the path is /ping.
                 let req = std::str::from_utf8(&buf[..n]).unwrap_or("");
                 let body = if req.starts_with("GET /ping") {
                     "pong"
@@ -172,8 +172,8 @@ async fn bridge_streams_plaintext_to_mtls_upstream() -> Result<()> {
     };
     let client_config = precompile_client_config(&cfg)?;
 
-    // On simule l'app cliente : on connecte une vraie TcpStream "client" via une
-    // paire socket → bridge_to_mtls_upstream prend l'autre bout.
+    // Simulate the client app: a real "client" TcpStream is connected through a
+    // socket pair -> bridge_to_mtls_upstream takes the other end.
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let proxy_port = listener.local_addr()?.port();
 
@@ -188,29 +188,29 @@ async fn bridge_streams_plaintext_to_mtls_upstream() -> Result<()> {
     client
         .write_all(b"GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
         .await?;
-    // Half-close write côté client : sans ça, copy_bidirectional attend EOF
-    // sur les deux sens et le test bloque indéfiniment.
+    // Half-close the client's write side: without it, the bridge waits for EOF
+    // in both directions and the test hangs forever.
     client.shutdown().await?;
 
     let mut response = Vec::new();
-    // Timeout de sécurité : si le pont a un souci de propagation, on échoue
-    // explicitement au lieu de pendre la CI.
+    // Safety timeout: if the bridge has a propagation issue, fail explicitly
+    // instead of hanging the CI.
     tokio::time::timeout(
         std::time::Duration::from_secs(5),
         client.read_to_end(&mut response),
     )
     .await
-    .expect("timeout en attente de la réponse upstream")?;
+    .expect("timeout waiting for the upstream response")?;
     proxy_task.await.unwrap()?;
 
     let response_str = String::from_utf8_lossy(&response);
     assert!(
         response_str.contains("HTTP/1.1 200 OK"),
-        "réponse inattendue : {response_str:?}"
+        "unexpected response: {response_str:?}"
     );
     assert!(
         response_str.ends_with("pong"),
-        "corps inattendu : {response_str:?}"
+        "unexpected body: {response_str:?}"
     );
     Ok(())
 }

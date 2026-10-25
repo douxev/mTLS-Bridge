@@ -2,43 +2,44 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Réseau loopback — pas besoin d'INTERNET pour 127.0.0.1, mais on en a
-         besoin pour le côté upstream du proxy. -->
+    <!-- Loopback network: INTERNET is not needed for 127.0.0.1, but it is
+         needed for the upstream side of the proxy. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Android 17 (API 37) : accès aux upstreams en RFC 1918 / link-local /
-         CGNAT. Permission runtime du groupe « Appareils à proximité »,
-         demandée seulement si l'hôte upstream se résout en adresse locale
-         (voir runtime/LocalNetworkAccess.kt). -->
+    <!-- Android 17 (API 37): access to RFC 1918 / link-local / CGNAT
+         upstreams. Runtime permission of the "Nearby devices" group,
+         requested only if the upstream host resolves to a local address
+         (see runtime/LocalNetworkAccess.kt). -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Proxy loopback : aucun type FGS dédié ne correspond à un proxy réseau
-         local → specialUse (justification déclarée sur le <service>). -->
+    <!-- Loopback proxy: no dedicated FGS type fits a local network proxy,
+         hence specialUse (justification declared on the <service>). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- VpnService : la doc des types FGS réserve systemExempted aux « VPN apps »
-         (consentement VpnService.prepare() accordé). -->
+    <!-- VpnService: the FGS types documentation reserves systemExempted for
+         "VPN apps" (VpnService.prepare() consent granted). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
-    <!-- Notification (Android 13+). -->
+    <!-- Notifications (Android 13+). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Relance des proxys actifs au démarrage (TV : redémarrages fréquents,
-         Jellyfin lancé depuis l'accueil sans ouvrir mTLS Bridge). -->
+    <!-- Restart active proxies at boot (TV: frequent restarts, Jellyfin
+         launched from the home screen without opening mTLS Bridge). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Un seul APK téléphone + Android TV / Google TV : leanback et écran
-         tactile optionnels, sinon le Play Store ne propose pas l'app sur TV. -->
+    <!-- A single APK for phone + Android TV / Google TV: leanback and
+         touchscreen are optional, otherwise the Play Store does not offer the
+         app on TV. -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <queries>
-        <!-- Pour lister les apps lanceables dans le picker AddConfig et
-             résoudre leur UID (getApplicationInfo). Sans ça, Android 11+ filtre
-             les retours de PackageManager ; pas besoin de QUERY_ALL_PACKAGES. -->
+        <!-- To list launchable apps in the AddConfig picker and resolve their
+             UID (getApplicationInfo). Without this, Android 11+ filters
+             PackageManager results; QUERY_ALL_PACKAGES is not needed. -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent>
-        <!-- Apps réservées à Android TV (ex. org.jellyfin.androidtv) : elles
-             n'exposent que LEANBACK_LAUNCHER et seraient sinon invisibles. -->
+        <!-- Android TV-only apps (e.g. org.jellyfin.androidtv): they only
+             expose LEANBACK_LAUNCHER and would otherwise be invisible. -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
@@ -64,13 +65,13 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-                <!-- Écran d'accueil Android TV / Google TV. -->
+                <!-- Android TV / Google TV home screen. -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- Proxy loopback : ForegroundService de type specialUse. La valeur
-             de la propriété est relue par Google Play à la soumission. -->
+        <!-- Loopback proxy: specialUse ForegroundService. The property value
+             is reviewed by Google Play on submission. -->
         <service
             android:name=".service.LoopbackProxyService"
             android:foregroundServiceType="specialUse"
@@ -80,11 +81,11 @@
                 android:value="Local mTLS proxy: listens on 127.0.0.1 for one app chosen by the user and forwards its HTTP requests over mutual TLS to a self-hosted server, signing with a client key kept in Android Keystore. Must keep running while that app is in use; started and stopped explicitly by the user." />
         </service>
 
-        <!-- Service VPN : permission BIND_VPN_SERVICE octroyée par l'OS au
-             premier consentement utilisateur via VpnService.prepare().
-             Lint ne connaît que les critères « alarme exacte » de systemExempted ;
-             la doc des types FGS y range aussi les « VPN apps » (consentement
-             VPN accordé), notre cas. -->
+        <!-- VPN service: BIND_VPN_SERVICE permission granted by the OS on the
+             first user consent via VpnService.prepare().
+             Lint only knows the "exact alarm" criteria of systemExempted; the
+             FGS types documentation also lists "VPN apps" there (VPN consent
+             granted), which is our case. -->
         <service
             android:name=".service.MtlsVpnService"
             android:foregroundServiceType="systemExempted"
@@ -96,14 +97,14 @@
             </intent-filter>
         </service>
 
-        <!-- Pas exporté : déclenchable uniquement par nos propres PendingIntent
-             depuis les notifications de premier plan. -->
+        <!-- Not exported: can only be triggered by our own PendingIntents from
+             the foreground notifications. -->
         <receiver
             android:name=".service.ProxyStopReceiver"
             android:exported="false" />
 
-        <!-- Exporté pour recevoir BOOT_COMPLETED / MY_PACKAGE_REPLACED, deux
-             broadcasts protégés que seul le système peut émettre. -->
+        <!-- Exported to receive BOOT_COMPLETED / MY_PACKAGE_REPLACED, two
+             protected broadcasts that only the system can send. -->
         <receiver
             android:name=".service.BootReceiver"
             android:exported="true">
