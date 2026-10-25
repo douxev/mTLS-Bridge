@@ -20,6 +20,7 @@ import com.douxev.mtls_bridge.ffi.VpnHandle
 import com.douxev.mtls_bridge.ffi.VpnRouteSpec
 import com.douxev.mtls_bridge.ffi.startVpnProxy
 import com.douxev.mtls_bridge.runtime.AuditLoggerImpl
+import com.douxev.mtls_bridge.runtime.AutoStartSettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -86,6 +87,9 @@ class MtlsVpnService : VpnService() {
 
     /** Consent revoked (settings) or another VPN app enabled. */
     override fun onRevoke() {
+        // Another VPN app took over, or the user revoked us: do not bring the
+        // tunnel back at the next boot.
+        AutoStartSettings.setVpnWanted(this, false)
         scope.launch {
             tunnelMutex.withLock { stopTunnel() }
             (application as MtlsApplication).vpnRunning.value = false

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.VpnService
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.douxev.mtls_bridge.runtime.AutoStartSettings
 import com.douxev.mtls_bridge.runtime.InstalledApps
 
 /**
@@ -68,6 +69,7 @@ object ProxyLauncher {
      * not crash if the OS then refuses to move it to the foreground.
      */
     fun startVpnGlobal(context: Context) {
+        AutoStartSettings.setVpnWanted(context, true)
         try {
             context.startService(Intent(context, MtlsVpnService::class.java))
         } catch (e: IllegalStateException) {
@@ -75,9 +77,28 @@ object ProxyLauncher {
         }
     }
 
+    /**
+     * Restores the VPN from BOOT_COMPLETED: the app is in the background, so
+     * only a foreground-service start is allowed (exempt right after boot).
+     * Requires the VPN consent to still be granted.
+     */
+    fun startVpnFromBoot(context: Context): Boolean {
+        if (VpnService.prepare(context) != null) {
+            Log.w(TAG, "VPN not restored at boot: consent no longer granted")
+            return false
+        }
+        return try {
+            ContextCompat.startForegroundService(context, Intent(context, MtlsVpnService::class.java))
+            true
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "VPN start at boot refused: ${e.message}")
+            false
+        }
+    }
 
     /** Shuts down the tun then the service (stopService alone leaves the tun bound by the OS). */
     fun stopVpn(context: Context) {
+        AutoStartSettings.setVpnWanted(context, false)
         val intent = Intent(context, MtlsVpnService::class.java)
             .setAction(MtlsVpnService.ACTION_STOP)
         try {

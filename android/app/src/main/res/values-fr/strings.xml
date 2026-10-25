@@ -29,6 +29,7 @@
     <string name="list_menu_export">Exporter…</string>
     <string name="list_menu_import">Importer…</string>
     <string name="list_menu_delete_after_import">Supprimer le fichier après import</string>
+    <string name="list_menu_start_on_boot">Démarrer au démarrage de l\'appareil</string>
     <string name="list_menu_remote">Configuration à distance…</string>
     <string name="list_menu_help">Aide &amp; déploiement</string>
     <string name="list_fab_new">Nouvelle config</string>

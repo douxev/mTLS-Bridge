@@ -59,6 +59,7 @@ import com.douxev.mtls_bridge.MtlsApplication
 import com.douxev.mtls_bridge.R
 import com.douxev.mtls_bridge.data.ConfigEntity
 import com.douxev.mtls_bridge.data.ProxyMode
+import com.douxev.mtls_bridge.runtime.AutoStartSettings
 import com.douxev.mtls_bridge.runtime.SafFileUtils
 import com.douxev.mtls_bridge.service.ProxyLauncher
 import com.douxev.mtls_bridge.ui.common.BadgeRow
@@ -106,6 +107,12 @@ fun ConfigListScreen(
     var showExportDialog by remember { mutableStateOf(false) }
     var pendingExportIds by remember { mutableStateOf<Set<String>?>(null) }
     var deleteImportFile by remember { mutableStateOf(false) }
+    // Restore proxies (and the VPN if it was on) after a reboot or an update.
+    var startOnBoot by remember { mutableStateOf(AutoStartSettings.startOnBoot(context)) }
+    val setStartOnBoot: (Boolean) -> Unit = { enabled ->
+        AutoStartSettings.setStartOnBoot(context, enabled)
+        startOnBoot = enabled
+    }
     var pendingDelete by remember { mutableStateOf<ConfigEntity?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(
@@ -276,6 +283,18 @@ fun ConfigListScreen(
                                 }
                             },
                             onClick = { deleteImportFile = !deleteImportFile },
+                        )
+                        DropdownMenuItem(
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(
+                                        checked = startOnBoot,
+                                        onCheckedChange = { setStartOnBoot(it) },
+                                    )
+                                    Text(stringResource(R.string.list_menu_start_on_boot))
+                                }
+                            },
+                            onClick = { setStartOnBoot(!startOnBoot) },
                         )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.list_menu_remote)) },

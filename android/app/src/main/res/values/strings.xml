@@ -31,6 +31,7 @@
     <string name="list_menu_export">Export…</string>
     <string name="list_menu_import">Import…</string>
     <string name="list_menu_delete_after_import">Delete file after import</string>
+    <string name="list_menu_start_on_boot">Start on device boot</string>
     <string name="list_menu_remote">Remote configuration…</string>
     <string name="list_menu_help">Help &amp; deployment</string>
     <string name="list_fab_new">New config</string>
