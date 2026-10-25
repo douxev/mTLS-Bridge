@@ -39,8 +39,9 @@ android {
         minSdk = 29
         // 36 required by Play for updates since 2026-08-31.
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        // versionCode = major * 10000 + minor * 100 + patch.
+        versionCode = 10000
+        versionName = "1.0.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
