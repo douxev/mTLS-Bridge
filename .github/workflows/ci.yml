@@ -97,11 +97,15 @@ jobs:
       # ANDROID_NDK_HOME (read by cargo-ndk) is derived in the shell: the
       # runner's ANDROID_HOME variable is not necessarily in the `env`
       # context of expressions.
-      - name: Build debug APK
+      # The release variant is built unsigned (no signing secrets here, and
+      # none for pull requests from forks): it only checks that R8
+      # minification and the release lint pass. Signed release APKs are built
+      # by the Release workflow on v* tags.
+      - name: Build debug APK and check the release build
         working-directory: android
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$NDK_VERSION"
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :app:assembleDebug :app:assembleRelease --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
