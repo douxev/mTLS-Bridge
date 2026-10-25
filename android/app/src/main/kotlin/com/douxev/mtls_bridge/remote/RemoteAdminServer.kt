@@ -1,6 +1,7 @@
 package com.douxev.mtls_bridge.remote
 
 import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.Base64
 import android.util.Log
 import com.douxev.mtls_bridge.MtlsApplication
@@ -293,30 +294,41 @@ class RemoteAdminServer(private val app: MtlsApplication) {
         b.isNotEmpty() && MessageDigest.isEqual(a.toByteArray(), b.toByteArray())
 
     /**
-     * IPv4 joignables depuis le réseau local : celles du réseau actif d'abord
-     * (Wi-Fi / Ethernet), puis les autres interfaces, hors loopback et hors
-     * notre propre tun VPN (192.0.2.0/24).
+     * IPv4 joignables depuis le réseau local : celles du réseau actif s'il
+     * s'agit du Wi-Fi ou de l'Ethernet, puis les autres interfaces LAN. On
+     * écarte les données mobiles (rmnet…, injoignables depuis le LAN), le
+     * 464XLAT (`v4-rmnet*`, 192.0.0.0/24) et notre propre tun VPN
+     * (192.0.2.0/24).
      */
     private fun localUrls(port: Int): List<String> {
         val cm = app.getSystemService(ConnectivityManager::class.java)
-        val active = cm?.activeNetwork?.let { cm.getLinkProperties(it) }
+        val active = cm?.activeNetwork
+            ?.takeIf { network ->
+                cm.getNetworkCapabilities(network)?.let {
+                    it.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                        it.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                } == true
+            }
+            ?.let { cm.getLinkProperties(it) }
             ?.linkAddresses.orEmpty().map { it.address }
         val others = runCatching {
             NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
-                .filter { it.isUp && !it.isLoopback && !it.name.startsWith("tun") }
+                .filter { it.isUp && !it.isLoopback && NON_LAN_INTERFACES.none { prefix -> it.name.startsWith(prefix) } }
                 .flatMap { it.inetAddresses.toList() }
         }.getOrDefault(emptyList())
         return (active + others)
             .filterIsInstance<Inet4Address>()
             .filter { !it.isLoopbackAddress && !it.isLinkLocalAddress }
             .mapNotNull { it.hostAddress }
-            .filter { !it.startsWith("192.0.2.") }
+            .filter { !it.startsWith("192.0.2.") && !it.startsWith("192.0.0.") }
             .distinct()
             .map { "https://$it:$port/" }
     }
 
     private companion object {
         const val TAG = "mtls_bridge.remote"
+        /** Préfixes d'interfaces jamais joignables depuis le LAN. */
+        val NON_LAN_INTERFACES = listOf("tun", "rmnet", "v4-", "ccmni", "ppp", "ipsec", "dummy")
         const val DEFAULT_PORT = 47443
         const val BACKLOG = 8
         const val MAX_CONNECTIONS = 8

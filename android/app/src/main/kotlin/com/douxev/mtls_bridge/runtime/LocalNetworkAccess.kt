@@ -13,10 +13,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * Protection « réseau local » d'Android 17 (API 37) : une app ciblant 37 ne
- * peut plus joindre une adresse du LAN sans la permission runtime
- * ACCESS_LOCAL_NETWORK. Un backend self-hosted en 192.168.x.x / 10.x.x.x
- * (upstream du proxy) est exactement ce cas.
+ * Protection « réseau local » d'Android 17 (API 37) : sans la permission
+ * runtime ACCESS_LOCAL_NETWORK, l'app ne peut plus échanger avec une adresse
+ * du LAN. La doc la réserve aux apps ciblant 37, mais sur Pixel 9 Pro /
+ * Android 17 elle s'applique déjà en targetSdk 36, y compris aux réponses
+ * d'un serveur de l'app (console d'administration LAN) : on la demande donc
+ * dès que l'OS la connaît. Un backend self-hosted en 192.168.x.x / 10.x.x.x
+ * (upstream du proxy) est le même cas.
  *
  * Définition des plages : developer.android.com/privacy-and-security/local-network-definition
  * (RFC 1918, link-local, CGNAT 100.64/10, multicast/broadcast ; ULA IPv6).

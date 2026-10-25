@@ -1,5 +1,10 @@
 package com.douxev.mtls_bridge.ui.remote
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -25,18 +30,25 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.douxev.mtls_bridge.remote.RemoteAdminServer
+import com.douxev.mtls_bridge.runtime.LocalNetworkAccess
 import com.douxev.mtls_bridge.ui.tv.tvFocusHighlight
 
 /**
@@ -52,6 +64,36 @@ fun RemoteAdminScreen(
     vm: RemoteAdminViewModel = viewModel(factory = RemoteAdminViewModel.Factory),
 ) {
     val status by vm.status.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+
+    // Android 17 : sans ACCESS_LOCAL_NETWORK, l'OS bloque les réponses de
+    // l'app vers les autres appareils du LAN (constaté y compris en
+    // targetSdk 36) — la page ne charge jamais dans le navigateur.
+    val localNetPermission = remember { LocalNetworkAccess.runtimePermission() }
+    var localNetGranted by remember { mutableStateOf(LocalNetworkAccess.isGranted(context)) }
+    val requestLocalNet = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> localNetGranted = granted }
+    LaunchedEffect(Unit) {
+        if (localNetPermission != null && !localNetGranted) requestLocalNet.launch(localNetPermission)
+    }
+    // Retour des réglages système : la permission a pu y être accordée.
+    LifecycleResumeEffect(Unit) {
+        localNetGranted = LocalNetworkAccess.isGranted(context)
+        onPauseOrDispose { }
+    }
+    val localNet = LocalNetState(
+        blocked = localNetPermission != null && !localNetGranted,
+        onRequest = { localNetPermission?.let(requestLocalNet::launch) },
+        onOpenSettings = {
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", context.packageName, null),
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        },
+    )
 
     val view = LocalView.current
     DisposableEffect(view) {
@@ -84,7 +126,7 @@ fun RemoteAdminScreen(
                 Column(
                     modifier = Modifier.weight(1f).verticalScroll(scroll),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) { Details(status, vm) }
+                ) { Details(status, vm, localNet) }
                 status.qrPayload?.takeIf { status.running }?.let { qr ->
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         QrCode(qr, size = 240.dp)
@@ -105,7 +147,7 @@ fun RemoteAdminScreen(
                     .verticalScroll(scroll),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Details(status, vm)
+                Details(status, vm, localNet)
                 status.qrPayload?.takeIf { status.running }?.let { qr ->
                     QrCode(qr, size = 200.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
                 }
@@ -114,8 +156,52 @@ fun RemoteAdminScreen(
     }
 }
 
+private class LocalNetState(
+    val blocked: Boolean,
+    val onRequest: () -> Unit,
+    val onOpenSettings: () -> Unit,
+)
+
 @Composable
-private fun ColumnScope.Details(status: RemoteAdminServer.Status, vm: RemoteAdminViewModel) {
+private fun ColumnScope.Details(
+    status: RemoteAdminServer.Status,
+    vm: RemoteAdminViewModel,
+    localNet: LocalNetState,
+) {
+    if (localNet.blocked) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Accès au réseau local nécessaire",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Text(
+                    "Android bloque les réponses de l'app vers les autres appareils du " +
+                        "réseau tant que la permission « Appareils à proximité » n'est pas " +
+                        "accordée : la page ne se chargera pas dans le navigateur.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        onClick = localNet.onRequest,
+                        modifier = Modifier.tvFocusHighlight(ButtonDefaults.shape),
+                    ) { Text("Autoriser") }
+                    OutlinedButton(
+                        onClick = localNet.onOpenSettings,
+                        modifier = Modifier.tvFocusHighlight(ButtonDefaults.outlinedShape),
+                    ) { Text("Ouvrir les réglages") }
+                }
+            }
+        }
+    }
     Text(
         "Ouvre l'adresse ci-dessous dans le navigateur d'un ordinateur ou d'un " +
             "smartphone connecté au même réseau, puis saisis le PIN. Tu pourras y " +
