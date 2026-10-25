@@ -1,9 +1,32 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
+
+// Release signing material is never stored in the repository. It comes from
+// environment variables (CI: see .github/workflows/release.yml) or, for local
+// builds, from ~/keystores/mtls-bridge-release.properties. Debug builds keep
+// the standard SDK debug key.
+val releaseSigning: Map<String, String>? = System.getenv("MTLS_KEYSTORE_FILE")
+    ?.takeIf { it.isNotBlank() }
+    ?.let { storeFile ->
+        mapOf(
+            "storeFile" to storeFile,
+            "storePassword" to System.getenv("MTLS_KEYSTORE_PASSWORD").orEmpty(),
+            "keyAlias" to System.getenv("MTLS_KEY_ALIAS").orEmpty(),
+            "keyPassword" to System.getenv("MTLS_KEY_PASSWORD").orEmpty(),
+        )
+    }
+    ?: File(System.getProperty("user.home"), "keystores/mtls-bridge-release.properties")
+        .takeIf { it.isFile }
+        ?.let { file ->
+            val props = Properties().apply { file.inputStream().use { load(it) } }
+            props.stringPropertyNames().associateWith { props.getProperty(it) }
+        }
 
 android {
     namespace = "com.douxev.mtls_bridge"
@@ -24,8 +47,22 @@ android {
         }
     }
 
+    signingConfigs {
+        if (releaseSigning != null) {
+            create("release") {
+                storeFile = file(releaseSigning.getValue("storeFile"))
+                storePassword = releaseSigning.getValue("storePassword")
+                keyAlias = releaseSigning.getValue("keyAlias")
+                keyPassword = releaseSigning.getValue("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            // Unsigned when no release key is configured (assembleRelease
+            // still works, the APK just cannot be installed).
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -183,6 +220,7 @@ dependencies {
     // BiometricPrompt: optionally used to gate the use of a Keystore key
     // (setUserAuthenticationRequired) or access to the config list.
     implementation(libs.androidx.biometric)
+    implementation(libs.androidx.fragment.ktx)
 
     // UniFFI runtime: JNA carries the generated Kotlin bindings.
     implementation(libs.jna) { artifact { type = "aar" } }
