@@ -37,7 +37,7 @@ jobs:
     name: Rust tests (host)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -63,7 +63,7 @@ jobs:
     name: Android build + unit tests (3 ABIs)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # ABIs = abiFilters / cargo-ndk -t in android/app/build.gradle.kts.
       - name: Install Rust + Android targets
@@ -78,16 +78,18 @@ jobs:
         run: cargo install --locked cargo-ndk
 
       - name: Set up JDK ${{ env.JAVA_VERSION }}
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK ${{ env.NDK_VERSION }}
-        run: sdkmanager --install "ndk;${NDK_VERSION}"
+      # The runner image ships an Android SDK with its licenses accepted: use
+      # its sdkmanager directly (android-actions/setup-android fails on the
+      # image's extra add-on licenses).
+      - name: Install NDK ${{ env.NDK_VERSION }}, platform 36 and build-tools
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "ndk;${NDK_VERSION}" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Gradle cache
         uses: gradle/actions/setup-gradle@v3

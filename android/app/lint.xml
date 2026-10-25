@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- uniffi's generated bindings call java.lang.ref.Cleaner (API 33) only
+         after a runtime Class.forName check, with a JNA fallback below. -->
+    <issue id="NewApi">
+        <ignore path="build/generated/uniffi/**" />
+    </issue>
+</lint>
